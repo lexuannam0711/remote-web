@@ -196,6 +196,9 @@ Khi đó, server Web sẽ log dòng thông báo:
 `[web] WEB_TELEGRAM_POLLING=0 — remote control stays with the desktop app` [src/server/web.js:192],  
 nhường toàn bộ quyền nhận lệnh Telegram (`/status`, `/baocao`, duyệt review queue) và báo cáo định kỳ cho bản Desktop.
 
+> [!IMPORTANT]
+> **Xung đột cổng 8787 giữa hai repo:** bản Desktop (`npm start` trong `pancake-desktop-ai-shortcut-bot-v3`) và bản Web (`npm run web` ở đây) **đều mặc định cổng 8787**. Muốn chạy song song trên cùng máy: giữ Web ở 8787 (Manifest khóa dashboard-bridge vào đúng cổng này [extensions/pancake-bot/manifest.json:17-18]) và đặt `PORT` khác cho bản Desktop qua file `.env` của repo đó. Chạy cùng lúc không được thì một bên sẽ nhận `EADDRINUSE`.
+
 ---
 
 ## 8. Giới Hạn Hiện Tại & Lộ Trình
