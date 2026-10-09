@@ -1,0 +1,14 @@
+﻿<!doctype html><html lang="en"><meta charset="utf-8"><title>Local synthetic Pancake</title>
+<style>.conversation-list-item{width:320px;height:64px}button{min-width:90px;min-height:30px}</style>
+<main>
+<div class="conversation-list-item unread" data-row="1"><div class="list-tags-conv list_tags_conv_101_201"><span class="conversation_tags_item">VIP</span></div><span class="name-text">Synthetic Customer</span><span class="snippet-text">Synthetic unread</span></div>
+<div class="conversation-list-item unread" data-row="2"><div class="list-tags-conv list_tags_conv_101_202"></div><span class="name-text">Synthetic Second</span><span class="snippet-text">Second unread</span></div>
+<div id="pageCustomer"><span class="customer-name">Synthetic Customer</span></div>
+<div id="listShowTags"><button class="btn-tag-item"><span class="ellipse"></span>VIP</button><button class="btn-tag-item">Inactive</button></div>
+<div id="messageCol"><textarea id="replyBoxComposer"></textarea></div>
+<button class="conv-action-btn" aria-label="Mark unread"><svg width="20" height="20"><g id="Mail Unread"><path d="M0 0h10v10z"/></g></svg></button>
+</main>
+<script>
+window.syntheticClicks=[];
+document.addEventListener('click',event=>{const row=event.target.closest('.conversation-list-item');if(row)window.syntheticClicks.push(row.dataset.row);});
+</script></html>

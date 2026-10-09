@@ -1,0 +1,50 @@
+{
+  "manifest_version": 3,
+  "name": "Pancake Bot Bridge",
+  "version": "1.0.0",
+  "action": {
+    "default_popup": "popup.html"
+  },
+  "permissions": [
+    "storage",
+    "tabs"
+  ],
+  "host_permissions": [
+    "https://pages.fm/*",
+    "https://pancake.vn/*",
+    "https://*.pages.fm/*",
+    "https://*.pancake.vn/*",
+    "http://localhost:8787/*",
+    "http://127.0.0.1:8787/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://pages.fm/*",
+        "https://pancake.vn/*",
+        "https://*.pages.fm/*",
+        "https://*.pancake.vn/*"
+      ],
+      "js": [
+        "vendor/pancakeUrlPolicy.js",
+        "vendor/pancakeDom.js",
+        "vendor/automation.js",
+        "pancake-bridge.js"
+      ],
+      "run_at": "document_end"
+    },
+    {
+      "matches": [
+        "http://localhost:8787/*",
+        "http://127.0.0.1:8787/*"
+      ],
+      "js": [
+        "dashboard-bridge.js"
+      ],
+      "run_at": "document_end"
+    }
+  ]
+}
