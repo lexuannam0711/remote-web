@@ -224,15 +224,26 @@ function bindWebSession() {
   $('acquireLeaseBtn').addEventListener('click', async () => {
     try { await acquireBotLease(); toast('Đã giữ bot lease'); } catch (error) { toast(error.message, 5000); }
   });
+  // Đăng nhập theo mode của server: unconfigured → pdb (cổ điển); bootstrap →
+  // pdb (1 lần duy nhất) + tài khoản Supabase; active → chỉ Supabase.
   $('loginForm').addEventListener('submit', async (event) => {
     event.preventDefault();
-    const input = $('accessToken');
+    const tokenInput = $('accessToken');
     try {
-      await api('/api/auth/login', { method: 'POST', body: JSON.stringify({ token: input.value }) });
+      let accessToken = '';
+      const useSupa = authMode.mode !== 'unconfigured';
+      if (useSupa && ($('loginEmail').value || authMode.mode === 'bootstrap')) accessToken = await supabasePasswordGrant();
+      const route = authMode.mode === 'bootstrap' ? '/api/auth/bootstrap'
+        : accessToken ? '/api/auth/supabase-login' : '/api/auth/login';
+      const body = route === '/api/auth/bootstrap' ? { token: tokenInput.value, accessToken }
+        : accessToken ? { accessToken } : { token: tokenInput.value };
+      await api(route, { method: 'POST', body: JSON.stringify(body) });
       $('loginError').textContent = '';
       window.location.reload();
-    } catch (error) { $('loginError').textContent = error.message; }
-    finally { input.value = ''; }
+    } catch (error) {
+      if (error.status === 403) $('loginError').textContent = 'Tài khoản đã ghi nhận — chờ quản trị duyệt.';
+      else $('loginError').textContent = error.message;
+    } finally { tokenInput.value = ''; $('loginPassword').value = ''; }
   });
   $('logoutBtn').addEventListener('click', async () => {
     try {
@@ -241,6 +252,90 @@ function bindWebSession() {
       window.location.reload();
     } catch (error) { toast(error.message); }
   });
+}
+
+// ---- Máy trạng thái đăng nhập (song hành với src/server/supabaseAuth.js) ----
+// unconfigured: chỉ pdb (cổ điển). bootstrap: pdb 1 lần + Supabase.
+// active: chỉ Supabase (thêm pdb khi break-glass). Mật khẩu Supabase chỉ đi
+// thẳng lên Supabase; server của ta chỉ nhận access_token đã verify.
+let authMode = { mode: 'unconfigured', supabaseUrl: null, supabaseAnonKey: null, emergencyPdb: false };
+
+function applyLoginMode() {
+  const useSupa = authMode.mode !== 'unconfigured';
+  const showPdb = !useSupa || authMode.mode === 'bootstrap' || authMode.emergencyPdb === true;
+  $('loginTokenLabel').hidden = !showPdb;
+  $('accessToken').hidden = !showPdb;
+  $('accessToken').required = showPdb;
+  $('loginEmailLabel').hidden = !useSupa;
+  $('loginEmail').hidden = !useSupa;
+  $('loginEmail').required = useSupa && authMode.mode === 'bootstrap';
+  $('loginPasswordLabel').hidden = !useSupa;
+  $('loginPassword').hidden = !useSupa;
+  $('loginPassword').required = useSupa;
+  const hint = $('loginModeHint');
+  hint.hidden = authMode.mode !== 'bootstrap';
+  hint.textContent = authMode.mode === 'bootstrap'
+    ? 'Đăng nhập lần đầu: dán token + tài khoản Supabase. Token chỉ dùng đúng 1 lần này.'
+    : '';
+}
+
+async function loadAuthMode() {
+  try { authMode = await api('/api/auth/mode'); } catch (_) { authMode = { mode: 'unconfigured' }; }
+  applyLoginMode();
+  return authMode;
+}
+
+async function supabasePasswordGrant() {
+  const response = await fetch(`${authMode.supabaseUrl}/auth/v1/token?grant_type=password`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', apikey: authMode.supabaseAnonKey },
+    body: JSON.stringify({ email: $('loginEmail').value.trim(), password: $('loginPassword').value })
+  });
+  if (!response.ok) throw Object.assign(new Error('Sai email hoặc mật khẩu Supabase'), { status: response.status });
+  return String((await response.json()).access_token || '');
+}
+
+// Card quản lý user: chỉ owner thấy (api trả 403 với người thường → ẩn card).
+async function loadUsersCard() {
+  try {
+    const data = await api('/api/auth/users');
+    if (!data || !Array.isArray(data.users)) return;
+    $('usersOwnerInfo').textContent = data.owner?.email ? `Chủ máy: ${data.owner.email}` : 'Chủ máy';
+    const list = $('usersList');
+    list.textContent = '';
+    if (!data.users.length) {
+      const empty = document.createElement('p');
+      empty.className = 'muted';
+      empty.textContent = 'Chưa có ai chờ duyệt.';
+      list.appendChild(empty);
+    }
+    for (const user of data.users) {
+      const row = document.createElement('div');
+      row.className = 'user-row';
+      const info = document.createElement('span');
+      info.textContent = `${user.email || user.userId} — ${user.status === 'approved' ? 'đã duyệt' : 'chờ duyệt'}`;
+      row.appendChild(info);
+      if (user.status === 'pending') {
+        for (const decision of ['approve', 'reject']) {
+          const btn = document.createElement('button');
+          btn.className = decision === 'approve' ? 'btn' : 'btn ghost';
+          btn.type = 'button';
+          btn.textContent = decision === 'approve' ? 'Duyệt' : 'Từ chối';
+          btn.addEventListener('click', async () => {
+            try {
+              await api('/api/auth/users/decide', { method: 'POST', body: JSON.stringify({ userId: user.userId, decision }) });
+              await loadUsersCard();
+            } catch (e) { toast(e.message, 5000); }
+          });
+          row.appendChild(btn);
+        }
+      }
+      list.appendChild(row);
+    }
+    $('usersCard').hidden = false;
+  } catch (_) {
+    $('usersCard').hidden = true;
+  }
 }
 
 // ===========================================================================
@@ -2111,6 +2206,9 @@ async function init() {
   initTheme();
   bindTabs();
   bindUi();
+  // Biết kiểu đăng nhập TRƯỚC khi có route nào 401 bật loginPanel, để form
+  // hiện đúng ô (pdb / Supabase) ngay lần đầu người dùng mở trang.
+  await loadAuthMode();
   const env = window.PDB_ENV;
   pancakeUrl = env.pancakeUrl || pancakeUrl;
   $('urlInput').value = pancakeUrl;
@@ -2127,6 +2225,8 @@ async function init() {
   await loadExtensions();
   computeBotStats();   // thống kê bot lần đầu (tab Tổng quan)
   startPolling();
+  // Card quản lý người dùng chỉ hiện với owner; người thường bị ẩn im lặng.
+  await loadUsersCard();
 
   // Pause polling when the page is hidden; the lease heartbeat stays active.
   document.addEventListener('visibilitychange', () => {

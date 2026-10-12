@@ -27,11 +27,14 @@ function createAuth({ token, sessionTtlMs = 72 * 3600000, rateWindowMs = 60000, 
   positive(rateWindowMs, 'rateWindowMs');
   positive(rateMax, 'rateMax');
   const expected = crypto.createHash('sha256').update(token).digest();
+  // Phiên mang theo principal ({kind:'pdb'} cho token cổ điển, hoặc Supabase
+  // {kind:'supabase', userId, email, owner}) để các route owner-only biết ai
+  // đang giữ cookie; bản thân Map vẫn là nội bộ, không lộ ra response nào.
   const sessions = new Map();
   const attempts = new Map();
   function prune() {
     const time = now();
-    for (const [id, expiry] of sessions) if (expiry <= time) sessions.delete(id);
+    for (const [id, entry] of sessions) if (entry.expiresAt <= time) sessions.delete(id);
     for (const [ip, attempt] of attempts) if (attempt.expiresAt <= time) attempts.delete(ip);
   }
   function cookie(req, id, maxAge) {
@@ -49,6 +52,26 @@ function createAuth({ token, sessionTtlMs = 72 * 3600000, rateWindowMs = 60000, 
     }
     return JSON.parse(Buffer.concat(chunks).toString('utf8'));
   }
+  function verifyToken(candidate) {
+    if (typeof candidate !== 'string' || !candidate) return false;
+    const supplied = crypto.createHash('sha256').update(candidate).digest();
+    return crypto.timingSafeEqual(supplied, expected);
+  }
+  // Cấp phiên cho principal đã xác thực (pdb hoặc Supabase); thay phiên cũ của
+  // cùng cookie để chống fixation, giữ nguyên flag cookie HttpOnly/Strict.
+  function issue(req, res, principal) {
+    prune();
+    const id = crypto.randomBytes(32).toString('hex');
+    sessions.delete(parseCookie(req.headers.cookie).pdb_session);
+    sessions.set(id, { expiresAt: now() + sessionTtlMs, principal });
+    res.setHeader('Set-Cookie', cookie(req, id, Math.floor(sessionTtlMs / 1000)));
+    return id;
+  }
+  function principal(req) {
+    prune();
+    const entry = sessions.get(parseCookie(req.headers.cookie).pdb_session);
+    return entry ? entry.principal : null;
+  }
   async function login(req, res) {
     prune();
     // Socket identity prevents rate-limit bypass via spoofed X-Forwarded-For.
@@ -63,16 +86,12 @@ function createAuth({ token, sessionTtlMs = 72 * 3600000, rateWindowMs = 60000, 
       return json(res, error.status || 400, { error: 'JSON khong hop le' });
     }
     if (!body || typeof body.token !== 'string') return json(res, 400, { error: 'Token khong hop le' });
-    const supplied = crypto.createHash('sha256').update(body.token).digest();
-    if (!crypto.timingSafeEqual(supplied, expected)) {
+    if (!verifyToken(body.token)) {
       attempts.set(ip, { count: (attempt?.count || 0) + 1, expiresAt: attempt?.expiresAt ?? now() + rateWindowMs });
       return json(res, 401, { error: 'Sai token' });
     }
     attempts.delete(ip);
-    const id = crypto.randomBytes(32).toString('hex');
-    sessions.delete(parseCookie(req.headers.cookie).pdb_session);
-    sessions.set(id, now() + sessionTtlMs);
-    res.setHeader('Set-Cookie', cookie(req, id, Math.floor(sessionTtlMs / 1000)));
+    issue(req, res, { kind: 'pdb' });
     return json(res, 200, { ok: true });
   }
   function session(req) {
@@ -87,7 +106,7 @@ function createAuth({ token, sessionTtlMs = 72 * 3600000, rateWindowMs = 60000, 
     res.setHeader('Set-Cookie', cookie(req, '', 0));
     return json(res, 200, { ok: true });
   }
-  return { login, requireAuth, logout, session };
+  return { login, requireAuth, logout, session, issue, principal, verifyToken };
 }
 
 function createLease({ ttlMs = 60000, now = Date.now } = {}) {

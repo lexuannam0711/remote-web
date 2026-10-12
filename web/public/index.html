@@ -2,7 +2,7 @@
 <html lang="vi">
 <head>
   <meta charset="UTF-8" />
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; media-src 'self' blob:" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self' https://*.supabase.co; media-src 'self' blob:" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Pancake Web AI Shortcut Bot</title>
   <link rel="stylesheet" href="style.css" />
@@ -29,7 +29,22 @@
         <article class="slot-card" data-slot="manual"><h2>Tab 3</h2><p id="manualStatus" role="status">Disconnected</p><p id="manualUrl" class="slot-url"></p><button class="btn" data-open-slot="manual">Mở tab Pancake</button><button class="btn ghost" data-ping-slot="manual">Kiểm tra bridge</button></article>
       </section>
       <section id="loginPanel" class="card session-card" hidden>
-        <form id="loginForm"><label for="accessToken">Token truy cập</label><input id="accessToken" type="password" autocomplete="current-password" required><button class="btn" type="submit">Đăng nhập</button><p id="loginError" role="alert"></p></form>
+        <form id="loginForm">
+          <p id="loginModeHint" hidden></p>
+          <label for="accessToken" id="loginTokenLabel">Token truy cập</label>
+          <input id="accessToken" type="password" autocomplete="current-password">
+          <label for="loginEmail" id="loginEmailLabel" hidden>Email (Supabase)</label>
+          <input id="loginEmail" type="email" autocomplete="username" hidden>
+          <label for="loginPassword" id="loginPasswordLabel" hidden>Mật khẩu</label>
+          <input id="loginPassword" type="password" autocomplete="current-password" hidden>
+          <button class="btn" type="submit">Đăng nhập</button>
+          <p id="loginError" role="alert"></p>
+        </form>
+      </section>
+      <section id="usersCard" class="card" hidden>
+        <h3>Người dùng được phép</h3>
+        <p id="usersOwnerInfo" class="muted"></p>
+        <div id="usersList"></div>
       </section>
       <button id="logoutBtn" class="btn ghost session-logout">Đăng xuất</button>
     </main>

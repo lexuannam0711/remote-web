@@ -3,10 +3,74 @@ const express = require('express');
 const cors = require('cors');
 const path = require('node:path');
 const { createAuth, createLease } = require('./auth');
+const { resolveSupabaseConfig, createSupabaseAuth } = require('./supabaseAuth');
 
-function createWebApp({ env = process.env, auth, lease = createLease(), webRoot = path.resolve(__dirname, '../../web/public'), telegramBot, appFactory, store } = {}) {
+// Trang đăng nhập công cộng: tự đọc /api/auth/mode để biết kiểu xác thực.
+// unconfigured → chỉ ô pdb (hành vi cổ điển); bootstrap → pdb (1 lần) +
+// Supabase; active → chỉ Supabase (thêm ô pdb nếu break-glass đang bật).
+//Browser gọi thẳng Supabase password grant để lấy access_token, rồi đưa
+// access_token (KHÔNG bao giờ là mật khẩu) cho endpoint của ta — server verify
+// phía sau và không lưu token vào bất kỳ đâu.
+const loginPage = () => `<!doctype html><html lang="vi"><meta charset="utf-8"><title>Dang nhap</title>
+<style>body{font-family:system-ui;background:#0f1420;color:#e8ecf5;display:grid;place-items:center;min-height:100vh;margin:0}form{display:grid;gap:10px;width:min(340px,90vw)}input{padding:10px;border-radius:8px;border:1px solid #334;background:#151c2c;color:inherit}button{padding:10px;border-radius:8px;border:0;background:#4c8dff;color:#fff;font-weight:600}[hidden]{display:none}p.error{color:#ff8f8f;min-height:1.2em}</style>
+<form id="login"><h2>Pancake Web Bot</h2>
+<label id="pdbRow">Token <input name="token" type="password" required autocomplete="current-password"></label>
+<label id="emailRow" hidden>Email <input name="email" type="email" autocomplete="username"></label>
+<label id="passRow" hidden>Mat khau <input name="password" type="password" autocomplete="current-password"></label>
+<button>Dang nhap</button><p role="alert" class="error" id="error"></p></form>
+<script>
+(async function () {
+  var form = document.getElementById('login'), err = document.getElementById('error');
+  var mode = { mode: 'unconfigured' };
+  try { mode = await (await fetch('/api/auth/mode')).json(); } catch (_) {}
+  var supa = mode.mode !== 'unconfigured';
+  var showPdb = !supa || mode.mode === 'bootstrap' || mode.emergencyPdb;
+  document.getElementById('pdbRow').hidden = !showPdb;
+  document.getElementById('emailRow').hidden = !supa;
+  document.getElementById('passRow').hidden = !supa;
+  if (supa && mode.mode === 'bootstrap') err.textContent = 'Lan dau: dien token + tai khoan Supabase (token chi dung 1 lan).';
+  form.addEventListener('submit', async function (event) {
+    event.preventDefault(); err.textContent = '';
+    var f = event.target.elements, token = f.token.value, accessToken = '';
+    try {
+      if (supa && (f.email.value || mode.mode === 'bootstrap')) {
+        var r = await fetch(mode.supabaseUrl + '/auth/v1/token?grant_type=password', { method: 'POST', headers: { 'Content-Type': 'application/json', apikey: mode.supabaseAnonKey }, body: JSON.stringify({ email: f.email.value.trim(), password: f.password.value }) });
+        if (!r.ok) { err.textContent = 'Sai email hoac mat khau Supabase'; return; }
+        accessToken = (await r.json()).access_token || '';
+      }
+      var route = mode.mode === 'bootstrap' ? '/api/auth/bootstrap' : accessToken ? '/api/auth/supabase-login' : '/api/auth/login';
+      var body = route === '/api/auth/bootstrap' ? { token: token, accessToken: accessToken } : accessToken ? { accessToken: accessToken } : { token: token };
+      var response = await fetch(route, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+      if (response.ok) location.assign('/');
+      else { var data = await response.json().catch(function () { return {}; }); err.textContent = (data.status === 'pending' ? 'Tai khoan da ghi nhan - cho owner duyet.' : data.error) || 'Khong dang nhap duoc'; }
+    } catch (_) { err.textContent = 'Khong ket noi duoc server'; }
+  });
+})();
+</script></html>`;
+
+function createWebApp({ env = process.env, auth, lease = createLease(), webRoot = path.resolve(__dirname, '../../web/public'), telegramBot, appFactory, store, supabaseFetch, supabaseState, logger = console } = {}) {
   if (typeof env.WEB_ACCESS_TOKEN !== 'string' || !env.WEB_ACCESS_TOKEN.trim()) throw new Error('WEB_ACCESS_TOKEN is required for web mode');
   const webAuth = auth || createAuth({ token: env.WEB_ACCESS_TOKEN, sessionTtlMs: Number(env.SESSION_TTL_HOURS || 72) * 3600000 });
+  // Trạng thái Supabase nằm ở server/data/supabase.json — file này đã bị
+  // .gitignore chặn theo luật "server/data/*.json" (kho public không lộ owner).
+  const supabaseConfig = resolveSupabaseConfig(env);
+  const supabase = createSupabaseAuth({
+    config: supabaseConfig,
+    auth: webAuth,
+    env,
+    logger,
+    fetchImpl: supabaseFetch,
+    state: supabaseState || {
+      load: async () => {
+        const storeModule = store || require('./store');
+        // readJson tự khởi tạo file thiếu bằng fallback (thói quen của store.js);
+        // fallback {} có nghĩa "chưa bind owner" → mode bootstrap.
+        const data = await storeModule.readJson('supabase.json', {});
+        return data && typeof data === 'object' && !Array.isArray(data) ? data : {};
+      },
+      save: async (data) => { const storeModule = store || require('./store'); await storeModule.writeJson('supabase.json', data); },
+    },
+  });
   const app = express();
   app.disable('x-powered-by');
   // Behind an HTTPS reverse proxy req.protocol stays 'http' unless the proxy
@@ -53,8 +117,16 @@ function createWebApp({ env = process.env, auth, lease = createLease(), webRoot 
     next();
   });
   // Public login form; dashboard assets remain authenticated.
-  app.get('/api/auth/login', (_req, res) => res.type('html').send(`<!doctype html><html lang="vi"><meta charset="utf-8"><title>Dang nhap</title><form id="login"><label>Token <input name="token" type="password" required autocomplete="current-password"></label><button>Dang nhap</button><p role="alert" id="error"></p></form><script>document.getElementById('login').addEventListener('submit',async function(event){event.preventDefault();try{const response=await fetch('/api/auth/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({token:this.elements.token.value})});if(response.ok)location.assign('/');else document.getElementById('error').textContent=(await response.json()).error;}catch(error){document.getElementById('error').textContent='Khong ket noi duoc server';}});</script></html>`));
-  app.post('/api/auth/login', express.json({ limit: '4kb' }), webAuth.login);
+  app.get('/api/auth/login', (_req, res) => res.type('html').send(loginPage()));
+  // Cho phép chọn kiểu xác thực: mode công khai (không lộ bí mật — anon key
+  // Supabase là public theo thiết kế), bootstrap pdb 1 lần, và đăng nhập
+  // Supabase thường. Tất cả đều đi qua CSRF gate + security headers phía trên.
+  app.get('/api/auth/mode', supabase.modeHandler);
+  app.post('/api/auth/bootstrap', express.json({ limit: '4kb' }), supabase.bootstrapHandler);
+  app.post('/api/auth/supabase-login', express.json({ limit: '4kb' }), supabase.loginHandler);
+  // Đường pdb cổ điển: còn sống ở unconfigured/bootstrap, chết ở active
+  // (410) trừ break-glass WEB_PDB_EMERGENCY=1.
+  app.post('/api/auth/login', express.json({ limit: '4kb' }), supabase.legacyLoginHandler);
   // Human visitors hitting the dashboard without a session get the login form
   // (302) instead of raw JSON; API clients still receive 401 JSON.
   app.use((req, res, next) => {
@@ -126,6 +198,9 @@ function createWebApp({ env = process.env, auth, lease = createLease(), webRoot 
   });
   app.post('/api/auth/logout', webAuth.logout);
   app.get('/api/auth/session', (_req, res) => res.json({ ok: true }));
+  // Quản lý người dùng Supabase: chỉ owner (hoặc phiên pdb break-glass) mới vào được.
+  app.get('/api/auth/users', supabase.requireOwner, supabase.listHandler);
+  app.post('/api/auth/users/decide', supabase.requireOwner, express.json({ limit: '4kb' }), supabase.decideHandler);
   app.get('/api/env', (req, res) => res.json({ serverUrl: env.WEB_ALLOWED_ORIGIN || `${scheme(req)}://${req.get('host')}`, pancakeUrl: env.PREFERRED_PANCAKE_URL || 'https://pages.fm/' }));
   const leaseView = value => value ? { lease: { owner: value.owner, expiresAt: new Date(value.expiresAt).toISOString() } } : { lease: null };
   app.get('/api/bot-lease', (_req, res) => res.json(leaseView(lease.current())));

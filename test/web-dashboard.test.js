@@ -429,10 +429,32 @@ test('starting automation acquires lease before any business writes; stopping re
   assert.equal(h.evaluate('ownsLease()'), false);
 });
 
+test('login form follows auth mode: bootstrap shows pdb+supabase, active hides pdb', () => {
+  const h = dashboardHarness();
+  h.evaluate('authMode = { mode: "bootstrap", supabaseUrl: "https://x.supabase.co", supabaseAnonKey: "anon", emergencyPdb: false }; applyLoginMode();');
+  assert.equal(h.nodes.get('accessToken').hidden, false);
+  assert.equal(h.nodes.get('accessToken').required, true);
+  assert.equal(h.nodes.get('loginEmail').hidden, false);
+  assert.equal(h.nodes.get('loginPassword').hidden, false);
+  assert.equal(h.nodes.get('loginModeHint').hidden, false);
+  h.evaluate('authMode = { mode: "active", supabaseUrl: "https://x.supabase.co", supabaseAnonKey: "anon", emergencyPdb: false }; applyLoginMode();');
+  assert.equal(h.nodes.get('accessToken').hidden, true);
+  assert.equal(h.nodes.get('accessToken').required, false);
+  assert.equal(h.nodes.get('loginEmail').hidden, false);
+  assert.equal(h.nodes.get('loginModeHint').hidden, true);
+  // Break-glass: quay lại cả hai ô khi WEB_PDB_EMERGENCY=1.
+  h.evaluate('authMode = { mode: "active", supabaseUrl: "https://x.supabase.co", supabaseAnonKey: "anon", emergencyPdb: true }; applyLoginMode();');
+  assert.equal(h.nodes.get('accessToken').hidden, false);
+  h.evaluate('authMode = { mode: "unconfigured" }; applyLoginMode();');
+  assert.equal(h.nodes.get('accessToken').hidden, false);
+  assert.equal(h.nodes.get('accessToken').required, true);
+  assert.equal(h.nodes.get('loginEmail').hidden, true);
+});
+
 test('strict CSP, local scripts, no desktop automation transport', () => {
   const html = fs.readFileSync(path.join(__dirname, '../web/public/index.html'), 'utf8');
   const app = fs.readFileSync(path.join(__dirname, '../web/public/app.js'), 'utf8');
-  assert.match(html, /default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'/);
+  assert.match(html, /default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self' https:\/\/\*\.supabase\.co/);
   assert.doesNotMatch(html, /<webview/);
   assert.doesNotMatch(app, /executeJavaScript|\.webview\b|eval\(|new Function|window\.__PDB__/);
   for (const match of html.matchAll(/<script src="([^"]+)"/g)) assert.ok(fs.existsSync(path.join(__dirname, '../web/public', match[1])), match[1]);
