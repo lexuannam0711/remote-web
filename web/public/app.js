@@ -154,17 +154,44 @@ async function loadLease() {
     warning.textContent = error.status === 404 ? '' : 'Không xác minh được bot lease';
   }
 }
+let extendInFlight = null;
 async function extendBotLease() {
+  // Một heartbeat mỗi lúc: vòng lặp bot và timer 20s cùng gọi extend,
+  // gộp lại một request để không chồng chất và không lỗi "muộn" giả.
+  if (extendInFlight) return extendInFlight;
   const epoch = leaseEpoch;
-  try {
-    const data = await api('/api/bot-lease', { method: 'POST', body: JSON.stringify({ action: 'extend', machineId: getMachineId() }) });
-    // A late response after a loss must not resurrect the lease (MAJOR T5c).
-    if (epoch !== leaseEpoch) return;
-    if (!data.ok || data.lease?.owner !== machineId || leaseExpiresAt(data.lease) <= Date.now()) throw new Error('Bot lease đã mất');
-    heldLease = data.lease;
-  } catch (_) {
-    if (epoch === leaseEpoch) { loseLease(); toast('Mất bot lease: Emergency Stop', 5000); }
-  }
+  extendInFlight = (async () => {
+    try {
+      const data = await api('/api/bot-lease', {
+        method: 'POST',
+        body: JSON.stringify({ action: 'extend', machineId: getMachineId() }),
+        // Fetch treo vĩnh viễn từng làm lease âm thầm hết hạn TTL; chặn 8s để
+        // mất lease luôn được PHÁT HIỆN, không phải đoán qua TTL hết hạn.
+        signal: (typeof AbortSignal !== 'undefined' && typeof AbortSignal.timeout === 'function') ? AbortSignal.timeout(8000) : undefined
+      });
+      // A late response after a loss must not resurrect the lease (MAJOR T5c).
+      if (epoch !== leaseEpoch) return;
+      if (!data.ok || data.lease?.owner !== machineId || leaseExpiresAt(data.lease) <= Date.now()) throw new Error('Bot lease đã mất');
+      heldLease = data.lease;
+    } catch (_) {
+      if (epoch === leaseEpoch) { loseLease(); toast('Mất bot lease: Emergency Stop', 5000); }
+    } finally { extendInFlight = null; }
+  })();
+  return extendInFlight;
+}
+// Heartbeat piggyback (vá BOT_LOOP_ERROR "Cần giữ bot lease"): timer 20s có
+// thể ngừng chạy mà handle vẫn còn sống (máy sleep/resume, tab bị freeze,
+// timer bị throttle) hoặc handle bị dọn (pagehide); trong khi đó vòng lặp bot
+// vẫn chạy. Mỗi vòng lặp tự gia hạn khi TTL còn lại ≤ 25s — đây là nhánh bắt
+// được sự cố thật vì expiresAt là mốc thời gian tuyệt đối — hoặc khi handle
+// timer đã mất. Server luôn là trọng tài: người khác giữ lease → extend trả
+// !ok → loseLease terminal (frozen §4ter: mất là mất vĩnh viễn); lease
+// rỗng/hết hạn → server cấp lại cho đúng owner theo chính hợp đồng extend —
+// bot tự hồi phục thay vì dừng đột ngột.
+async function keepLeaseFresh() {
+  if (!heldLease) return;
+  if (leaseTimer && leaseExpiresAt(heldLease) - Date.now() > 25000) return;
+  await extendBotLease();
 }
 let leaseAcquirePromise = null;
 async function acquireBotLease() {
@@ -1375,6 +1402,7 @@ async function botLoop(runtime) {
   while (runtime.botRunning) {
     try {
       settings = await api('/api/settings');
+      await keepLeaseFresh();
       if (!settings.botEnabled) {
         await sleep(settings.scanIntervalMs || 2500);
         continue;
@@ -1571,6 +1599,7 @@ async function autoClickLoop(runtime) {
   while (runtime.autoClickRunning) {
     try {
       settings = await api('/api/settings');
+      await keepLeaseFresh();
       await processOneAutoClick(runtime);
       await sleep(settings.autoClickDelayMs || 3000);   // Req 6.1, 6.3
     } catch (error) {

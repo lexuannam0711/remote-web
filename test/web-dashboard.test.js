@@ -319,6 +319,73 @@ test('late extend response cannot resurrect a lost lease (T5c MAJOR)', async () 
   await assert.rejects(h.evaluate("executeInTab('bot1','clickSendButton')"), { code: 'BOT_LEASE_REQUIRED' });
 });
 
+test('loop heartbeat self-heals a stalled leaseTimer instead of failing writes (BOT_LOOP_ERROR fix)', async () => {
+  const h = dashboardHarness();
+  await h.evaluate('acquireBotLease()');
+  assert.ok([...h.intervals.values()].some((i) => i.ms === 20000));
+  const extendCount = () => h.requests.filter((r) => r.url === '/api/bot-lease' && r.options.body && JSON.parse(r.options.body).action === 'extend').length;
+  // Heartbeat khỏe (timer 20s sống, TTL còn xa): piggyback không phát request.
+  const before = extendCount();
+  await h.evaluate('keepLeaseFresh()');
+  assert.equal(extendCount(), before);
+  // Sự cố thực tế 2026-10-11: leaseTimer chết im lặng (sleep/freeze/fetch treo)
+  // trong khi vòng lặp vẫn chạy → TTL hết hạn → BOT_LOOP_ERROR. Giờ piggyback
+  // tự gia hạn ngay trong vòng lặp, lease được server cấp lại cho đúng owner.
+  h.evaluate('leaseTimer = null;');
+  await h.evaluate('keepLeaseFresh()');
+  assert.equal(extendCount(), before + 1);
+  assert.equal(h.evaluate('ownsLease()'), true);
+  // Heartbeat phải có abort signal giới hạn để fetch treo không âm thầm làm hỏng lease.
+  const lastExtend = h.requests.filter((r) => r.url === '/api/bot-lease' && r.options.body && JSON.parse(r.options.body).action === 'extend').at(-1);
+  assert.ok(lastExtend.options.signal && lastExtend.options.signal.aborted === false);
+});
+
+test('loop heartbeat stays terminal when another machine holds the lease', async () => {
+  const h = dashboardHarness();
+  await h.evaluate('acquireBotLease()');
+  h.evaluate('webviewTabs.bot1.runtime.botRunning = true;');
+  // Server báo người khác đang giữ; lease local sắp hết hạn → piggyback extend
+  // → !ok → loseLease terminal (frozen §4ter), dừng runtime, không tự hồi sinh.
+  h.setLease({ owner: 'other-machine', expiresAt: Date.now() + 60000 });
+  h.evaluate('heldLease = { owner: machineId, expiresAt: new Date(Date.now() + 3000).toISOString() };');
+  await h.evaluate('keepLeaseFresh()');
+  assert.equal(h.evaluate('ownsLease()'), false);
+  assert.equal(h.evaluate('anyRuntimeBotRunning()'), false);
+  assert.equal([...h.intervals.values()].some((i) => i.ms === 20000), false);
+  await assert.rejects(h.evaluate("executeInTab('bot1','clickSendButton')"), { code: 'BOT_LEASE_REQUIRED' });
+});
+
+test('expired lease with live timer handle self-heals (sleep/freeze incident shape)', async () => {
+  const h = dashboardHarness();
+  await h.evaluate('acquireBotLease()');
+  const extendCount = () => h.requests.filter((r) => r.url === '/api/bot-lease' && r.options.body && JSON.parse(r.options.body).action === 'extend').length;
+  // Hình dạng sự cố thực 2026-10-11: máy sleep / tab freeze khiến timer handle
+  // VẪN còn sống (truthy) nhưng không chạy; sau khi thức, heldLease đã quá hạn
+  // TTL (expiresAt là mốc tuyệt đối) và server cũng đã quên lease in-memory.
+  assert.equal(h.evaluate('Boolean(leaseTimer)'), true);
+  h.setLease(null);
+  h.evaluate('heldLease = { owner: machineId, expiresAt: new Date(Date.now() - 1000).toISOString() };');
+  await h.evaluate('keepLeaseFresh()');
+  // Nhánh TTL ≤ 25s kích hoạt piggyback; server cấp lại cho đúng owner qua
+  // extend (chính hợp đồng frozen §4ter) → bot tự hồi phục, không BOT_LOOP_ERROR.
+  assert.equal(h.evaluate('ownsLease()'), true);
+  assert.equal(extendCount(), 1);
+  // In-flight guard: hai piggyback dồn lại chỉ phát đúng MỘT request extend.
+  h.setLease(null);
+  h.evaluate('heldLease = { owner: machineId, expiresAt: new Date(Date.now() - 1000).toISOString() };');
+  await Promise.all([h.evaluate('keepLeaseFresh()'), h.evaluate('keepLeaseFresh()')]);
+  assert.equal(extendCount(), 2);
+});
+
+test('bot and autoclick loops re-heartbeat the lease every iteration', () => {
+  const source = fs.readFileSync(path.join(__dirname, '../web/public/app.js'), 'utf8');
+  for (const guard of ['while (runtime.botRunning)', 'while (runtime.autoClickRunning)']) {
+    const at = source.indexOf(guard);
+    assert.ok(at > 0, guard);
+    assert.match(source.slice(at, at + 400), /await keepLeaseFresh\(\)/, `${guard} must refresh the lease each iteration`);
+  }
+});
+
 test('machine identity is per tab: sessionStorage identity, reload-stable in that tab (T5a MINOR)', async () => {
   const sharedSession = new Map();
   const first = dashboardHarness({ sessionStore: sharedSession });
