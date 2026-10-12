@@ -11,13 +11,13 @@
 Mọi thao tác kiểm thử phải thực thi trực tiếp trong thư mục gốc của repo web:
 
 ```bash
-# 1. Kiểm tra cú pháp (Syntax Check) — kiểm tra 29 tệp nguồn JavaScript
+# 1. Kiểm tra cú pháp (Syntax Check) — kiểm tra 30 tệp nguồn JavaScript
 cd /f/CODE/botcake-v5/pancake-web-bot && npm run check
 # Kỳ vọng: Exit code 0, không in ra lỗi.
 
 # 2. Kiểm thử đơn vị & tích hợp (Unit & Integration Tests) — 20 test suites
 cd /f/CODE/botcake-v5/pancake-web-bot && npm test
-# Kỳ vọng: 192 tests pass, 0 fail, 0 skipped, thời gian ~2.3 giây.
+# Kỳ vọng: 208 tests pass, 0 fail, 0 skipped, thời gian ~2.6 giây.
 
 # 3. Kiểm thử đầu cuối (E2E Bridge Spec) — Chromium headless
 cd /f/CODE/botcake-v5/pancake-web-bot && npx playwright test
@@ -48,6 +48,7 @@ pancake-web-bot/
 ├── src/
 │   ├── server/               # Backend Express Server & Authentication
 │   │   ├── auth.js           # Session auth, timing-safe login, bot lease engine
+│   │   ├── supabaseAuth.js   # Đăng nhập Supabase, bootstrap pdb 1 lần, duyệt user
 │   │   ├── web.js            # Entry point npm run web, route bảo mật, CORS, CSRF gate
 │   │   ├── index.js          # Desktop API adapter & router lõi
 │   │   ├── store.js          # Quản lý đọc/ghi cài đặt (server/data/*.json)
@@ -155,10 +156,25 @@ Toàn bộ các yêu cầu bảo mật nghiêm ngặt từ bản vá bảo mật
 - Không tự ý thực thi lại lệnh `npx gitnexus analyze` trong repo này vì đây là tác vụ nặng tốn bộ nhớ và thời gian. Chỉ chạy khi Admin có chỉ thị phê duyệt trực tiếp (kể cả cờ `--force`).
 - Lưu ý: tool `gitnexus_query` hiện trả kết quả rỗng kèm cảnh báo FTS index thiếu (đã thử `analyze --force` lần 2 vẫn vậy). Các tool `context`, `impact`, `cypher`, `detect_changes` hoạt động bình thường. Khi cần tìm khái niệm, ưu tiên gọi trực tiếp `context`/`impact` theo tên symbol.
 
+---
+
+## 7. Hợp Đồng Đăng Nhập Supabase & Bootstrap pdb
+
+1. **Máy trạng thái 3 chế độ** (`src/server/supabaseAuth.js`, state tại `server/data/supabase.json` — đã bị `.gitignore` chặn):
+   - `unconfigured` (thiếu `WEB_SUPABASE_URL` hoặc `WEB_SUPABASE_ANON_KEY`): đăng nhập pdb cổ điển, toàn bộ hành vi cũ giữ nguyên.
+   - `bootstrap`: lần đầu phải dán **pdb (1 lần duy nhất)** + tài khoản Supabase → bind owner, ghi state, cấp session. Bootstrap lần hai luôn `410`.
+   - `active`: chỉ đăng nhập Supabase (`POST /api/auth/supabase-login`); `POST /api/auth/login` (pdb) trả `410`, trừ break-glass.
+2. **Break-glass `WEB_PDB_EMERGENCY=1`**: cấp lại đường pdb khi Supabase sập (có log WARN kiểm toán); phiên pdb được coi là quyền chủ (quản lý được user).
+3. **Chỉ dùng anon key** (verify `access_token` qua `GET <url>/auth/v1/user`). TUYỆT ĐỐI không đưa service key vào repo hay mã nguồn. `resolveSupabaseConfig` chỉ chấp nhận `https://*.supabase.co|in`, không userinfo, không path lạ.
+4. **access_token / pdb token không bao giờ** được ghi vào `logs.json`, response JSON, hay bất kỳ tệp nào; mật khẩu Supabase chỉ đi thẳng từ trình duyệt lên Supabase, không qua server của ta.
+5. **User lạ**: verify hợp lệ nhưng chưa duyệt → tự ghi vào hàng đợi `pending` và bị từ chối phiên (`403 {status:'pending'}`); owner duyệt/từ chối qua `/api/auth/users/decide`. Không có chế độ tự duyệt.
+6. **Session cookie giữ nguyên hợp đồng cũ**: `pdb_session`, HttpOnly, SameSite=Strict, Secure khi HTTPS; CSRF gate + 4 security headers + masking vẫn phủ toàn bộ route mới; mọi endpoint đăng nhập mới bị rate-limit theo socket IP như `createAuth.login`.
+7. **CSP dashboard** bắt buộc có `connect-src 'self' https://*.supabase.co` (test `web-dashboard.test.js` chặn hồi quy) — trình duyệt gọi thẳng Supabase password grant.
+
 <!-- gitnexus:start -->
 # GitNexus — Code Intelligence
 
-This project is indexed by GitNexus as **pancake-web-bot** (2408 symbols, 4907 relationships, 196 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
+This project is indexed by GitNexus as **pancake-web-bot** (2415 symbols, 4919 relationships, 196 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
 
 > If any GitNexus tool warns the index is stale, run `npx gitnexus analyze` in terminal first.
 

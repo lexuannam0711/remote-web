@@ -123,16 +123,16 @@ Script sẽ sao chép các tệp `pancakeDom.js`, `automation.js`, `pancakeUrlPo
 
 ---
 
-## 5. Bảng 9 Biến Môi Trường Thực Tế
+## 5. Bảng 12 Biến Môi Trường Thực Tế
 
-Toàn bộ các biến môi trường thực sự được đọc trong mã nguồn máy chủ Web được đối chiếu trực tiếp từ `src/server/web.js` và `src/server/auth.js`.
+Toàn bộ các biến môi trường thực sự được đọc trong mã nguồn máy chủ Web được đối chiếu trực tiếp từ `src/server/web.js`, `src/server/auth.js` và `src/server/supabaseAuth.js`.
 
 > [!NOTE]
 > Kiểm chứng bằng lệnh:
 > ```bash
-> grep -n -E "env\.[A-Za-z0-9_]+" src/server/web.js src/server/auth.js
+> grep -n -E "env\.[A-Za-z0-9_]+" src/server/web.js src/server/auth.js src/server/supabaseAuth.js
 > ```
-> Kết quả: Hệ thống đọc chính xác 9 biến môi trường dưới đây, không có bất kỳ biến ẩn hay biến thừa nào.
+> Kết quả: Hệ thống đọc chính xác 12 biến dưới đây, không có bất kỳ biến ẩn hay biến thừa nào.
 
 | STT | Tên Biến Môi Trường | Giá Trị Mặc Định | Vị Trí Mã Nguồn | Mô Tả Kỹ Thuật & Tác Dụng |
 | :-: | :--- | :--- | :--- | :--- |
@@ -145,6 +145,23 @@ Toàn bộ các biến môi trường thực sự được đọc trong mã ngu�
 | 7 | **`WEB_TELEGRAM_POLLING`** | `1` (bật) | [src/server/web.js:175-193] | Kiểm soát việc kích hoạt nhận lệnh Telegram (`getUpdates`) và báo cáo định kỳ. Đặt `0` để tắt polling khi bản desktop đang chạy cùng token (xem chi tiết mục 7). |
 | 8 | **`SESSION_TTL_HOURS`** | `72` (giờ) | [src/server/web.js:9]<br>[src/server/auth.js:24, 75] | Thời gian sống của phiên đăng nhập sau khi xác thực thành công. Được quy đổi sang mili-giây và gán vào `Max-Age` của cookie `pdb_session` [src/server/auth.js:39, 75]. |
 | 9 | **`PREFERRED_PANCAKE_URL`**| `https://pages.fm/` | [src/server/web.js:129] | Địa chỉ URL Pancake ưu tiên, trả về cho Dashboard và Extension qua API `/api/env` [src/server/web.js:129] để tự động mở tab hội thoại khách hàng. |
+| 10 | **`WEB_SUPABASE_URL`** | *(rỗng = tắt)* | [src/server/supabaseAuth.js:15] | URL project Supabase cho đăng nhập người dùng. Chỉ chấp nhận `https://*.supabase.co|in`, không userinfo, không path lạ (chặn trỏ bí mật tới host lạ). Kèm `WEB_SUPABASE_ANON_KEY` bật chế độ bootstrap/active (xem mục 5b). |
+| 11 | **`WEB_SUPABASE_ANON_KEY`** | *(rỗng = tắt)* | [src/server/supabaseAuth.js:16] | Anon key (public theo thiết kế Supabase) dùng để server verify `access_token` qua `GET /auth/v1/user`. TUYỆT ĐỐI không dùng service key trong repo này. |
+| 12 | **`WEB_PDB_EMERGENCY`** | `0` | [src/server/supabaseAuth.js:87] | Break-glass: `1` cho phép quay lại đăng nhập bằng `WEB_ACCESS_TOKEN` khi Supabase không dùng được; phiên pdb lúc đó là quyền chủ. Mặc định `0` — sau bootstrap, pdb bị chặn `410`. |
+
+---
+
+## 5b. Đăng Nhập Supabase & pdb Chỉ Dán 1 Lần
+
+Máy trạng thái 3 chế độ (state lưu ở `server/data/supabase.json`, đã gitignore):
+
+1. **`unconfigured`** — thiếu 2 biến mục 10+11: hành vi cũ 100% (đăng nhập `WEB_ACCESS_TOKEN`).
+2. **`bootstrap`** — đủ 2 biến nhưng **chưa** có chủ: trang đăng nhập yêu cầu dán **pdb 1 lần duy nhất** + email/mật khẩu Supabase. Mật khẩu chỉ đi thẳng từ trình duyệt lên Supabase (password grant); server của ta chỉ nhận `access_token` đã verify. Thành công → bind tài khoản đó làm **owner**, cấp session, pdb nghỉ hưu.
+3. **`active`** — mọi máy khác chỉ cần tài khoản Supabase. `POST /api/auth/login` trả `410`; đặt `WEB_PDB_EMERGENCY=1` để cứu cánh khi Supabase sập.
+
+**Người dùng mới**: đăng nhập đúng Supabase nhưng chưa được duyệt → hệ thống ghi vào hàng đợi `pending` và từ chối phiên (`403`). Owner mở card **"Người dùng được phép"** trong Dashboard để Duyệt/Từ chối. Không có chế độ tự duyệt, owner không thể tự gỡ quyền chính mình.
+
+**Điều kiện cần (Admin làm 1 lần):** tạo project Supabase mới, bật provider **Email/Password** trong Authentication → Providers, tạo tài khoản owner, rồi điền `WEB_SUPABASE_URL` + `WEB_SUPABASE_ANON_KEY` vào `.env` (không commit).
 
 ---
 
@@ -156,7 +173,7 @@ Toàn bộ quy trình kiểm thử đều chạy tự động và độc lập, 
 ```bash
 cd /f/CODE/botcake-v5/pancake-web-bot && npm run check
 ```
-- **Phạm vi:** Kiểm tra cú pháp toàn bộ 29 tệp nguồn JavaScript [package.json:8].
+- **Phạm vi:** Kiểm tra cú pháp toàn bộ 30 tệp nguồn JavaScript [package.json:8].
 - **Kỳ vọng:** Thoát với mã **Exit Code 0** (không có lỗi cú pháp).
 
 ### 6.2. Kiểm thử đơn vị & Tích hợp (Unit & Integration Tests)
@@ -164,7 +181,7 @@ cd /f/CODE/botcake-v5/pancake-web-bot && npm run check
 cd /f/CODE/botcake-v5/pancake-web-bot && npm test
 ```
 - **Phạm vi:** Chạy toàn bộ 20 tệp kiểm thử `test/*.test.js` bằng bộ chạy kiểm thử tích hợp `node --test` [package.json:9].
-- **Kỳ vọng:** **192 tests pass, 0 fail, 0 skipped**. Thời gian chạy ~2.3 giây.
+- **Kỳ vọng:** **208 tests pass, 0 fail, 0 skipped**. Thời gian chạy ~2.6 giây.
 
 ### 6.3. Kiểm thử đầu cuối Cầu nối Extension (E2E Bridge Spec)
 ```bash
