@@ -1,7 +1,7 @@
 <!-- gitnexus:start -->
 # GitNexus — Code Intelligence
 
-This project is indexed by GitNexus as **pancake-web-bot** (2415 symbols, 4919 relationships, 196 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
+This project is indexed by GitNexus as **remote-web** (2577 symbols, 5175 relationships, 204 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
 
 > If any GitNexus tool warns the index is stale, run `npx gitnexus analyze` in terminal first.
 
@@ -24,10 +24,10 @@ This project is indexed by GitNexus as **pancake-web-bot** (2415 symbols, 4919 r
 
 | Resource | Use for |
 |----------|---------|
-| `gitnexus://repo/pancake-web-bot/context` | Codebase overview, check index freshness |
-| `gitnexus://repo/pancake-web-bot/clusters` | All functional areas |
-| `gitnexus://repo/pancake-web-bot/processes` | All execution flows |
-| `gitnexus://repo/pancake-web-bot/process/{name}` | Step-by-step execution trace |
+| `gitnexus://repo/remote-web/context` | Codebase overview, check index freshness |
+| `gitnexus://repo/remote-web/clusters` | All functional areas |
+| `gitnexus://repo/remote-web/processes` | All execution flows |
+| `gitnexus://repo/remote-web/process/{name}` | Step-by-step execution trace |
 
 ## CLI
 
