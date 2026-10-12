@@ -151,5 +151,50 @@ Toàn bộ các yêu cầu bảo mật nghiêm ngặt từ bản vá bảo mật
 
 ## 6. Trạng Thái GitNexus
 
-- Repo `pancake-web-bot` là repo mới được tạo, **HIỆN CHƯA CÓ CHỈ MỤC GITNEXUS (No GitNexus index)**.
-- Không tự ý thực thi lệnh `npx gitnexus analyze` trong repo này vì đây là tác vụ nặng tốn bộ nhớ và thời gian. Chỉ chạy khi Admin có chỉ thị phê duyệt trực tiếp.
+- Repo `pancake-web-bot` đã được đánh chỉ mục GitNexus lần đầu ngày 2026-10-12 sau khi Admin phê duyệt (65 tệp nguồn, ~2.408 symbols, ~4.900 relationships, 196 execution flows). Thư mục `.gitnexus/` tự chứa `.gitignore` nên không lọt vào git.
+- Không tự ý thực thi lại lệnh `npx gitnexus analyze` trong repo này vì đây là tác vụ nặng tốn bộ nhớ và thời gian. Chỉ chạy khi Admin có chỉ thị phê duyệt trực tiếp (kể cả cờ `--force`).
+- Lưu ý: tool `gitnexus_query` hiện trả kết quả rỗng kèm cảnh báo FTS index thiếu (đã thử `analyze --force` lần 2 vẫn vậy). Các tool `context`, `impact`, `cypher`, `detect_changes` hoạt động bình thường. Khi cần tìm khái niệm, ưu tiên gọi trực tiếp `context`/`impact` theo tên symbol.
+
+<!-- gitnexus:start -->
+# GitNexus — Code Intelligence
+
+This project is indexed by GitNexus as **pancake-web-bot** (2408 symbols, 4907 relationships, 196 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
+
+> If any GitNexus tool warns the index is stale, run `npx gitnexus analyze` in terminal first.
+
+## Always Do
+
+- **MUST run impact analysis before editing any symbol.** Before modifying a function, class, or method, run `gitnexus_impact({target: "symbolName", direction: "upstream"})` and report the blast radius (direct callers, affected processes, risk level) to the user.
+- **MUST run `gitnexus_detect_changes()` before committing** to verify your changes only affect expected symbols and execution flows.
+- **MUST warn the user** if impact analysis returns HIGH or CRITICAL risk before proceeding with edits.
+- When exploring unfamiliar code, use `gitnexus_query({query: "concept"})` to find execution flows instead of grepping. It returns process-grouped results ranked by relevance.
+- When you need full context on a specific symbol — callers, callees, which execution flows it participates in — use `gitnexus_context({name: "symbolName"})`.
+
+## Never Do
+
+- NEVER edit a function, class, or method without first running `gitnexus_impact` on it.
+- NEVER ignore HIGH or CRITICAL risk warnings from impact analysis.
+- NEVER rename symbols with find-and-replace — use `gitnexus_rename` which understands the call graph.
+- NEVER commit changes without running `gitnexus_detect_changes()` to check affected scope.
+
+## Resources
+
+| Resource | Use for |
+|----------|---------|
+| `gitnexus://repo/pancake-web-bot/context` | Codebase overview, check index freshness |
+| `gitnexus://repo/pancake-web-bot/clusters` | All functional areas |
+| `gitnexus://repo/pancake-web-bot/processes` | All execution flows |
+| `gitnexus://repo/pancake-web-bot/process/{name}` | Step-by-step execution trace |
+
+## CLI
+
+| Task | Read this skill file |
+|------|---------------------|
+| Understand architecture / "How does X work?" | `.claude/skills/gitnexus/gitnexus-exploring/SKILL.md` |
+| Blast radius / "What breaks if I change X?" | `.claude/skills/gitnexus/gitnexus-impact-analysis/SKILL.md` |
+| Trace bugs / "Why is X failing?" | `.claude/skills/gitnexus/gitnexus-debugging/SKILL.md` |
+| Rename / extract / split / refactor | `.claude/skills/gitnexus/gitnexus-refactoring/SKILL.md` |
+| Tools, resources, schema reference | `.claude/skills/gitnexus/gitnexus-guide/SKILL.md` |
+| Index, status, clean, wiki CLI commands | `.claude/skills/gitnexus/gitnexus-cli/SKILL.md` |
+
+<!-- gitnexus:end -->
