@@ -60,9 +60,30 @@ async function handleMessage(message, sender) {
   }
   const settings = await chrome.storage.local.get({ bridgeEnabled: true, pancakeUrl: 'https://pages.fm/' });
   if (message.type === 'open-pancake-tab') {
-    if (!matches(settings.pancakeUrl, config[0].matches)) return failure(message.callId, 'INVALID_URL');
-    const tab = await chrome.tabs.create({ url: settings.pancakeUrl });
+    const targetUrl = message.url !== undefined ? message.url : settings.pancakeUrl;
+    if (typeof targetUrl !== 'string' || !matches(targetUrl, config[0].matches)) return failure(message.callId, 'INVALID_URL');
+    const tab = await chrome.tabs.create({ url: targetUrl });
     return { ok: true, tabId: tab.id };
+  }
+  if (message.type === 'navigate-tab') {
+    if (!slotNames.includes(message.slot)) return failure(message.callId, 'INVALID_CALL');
+    if (typeof message.url !== 'string' || !matches(message.url, config[0].matches)) return failure(message.callId, 'INVALID_URL');
+    const entry = [...pancakeTabs.entries()].find(([, value]) => value.slot === message.slot);
+    if (!entry) return failure(message.callId, 'NO_TAB');
+    const tabId = entry[0];
+    await chrome.tabs.update(tabId, { url: message.url });
+    entry[1].url = message.url;
+    entry[1].lastSeen = Date.now();
+    await broadcast();
+    return { ok: true, tabId };
+  }
+  if (message.type === 'reload-pancake-tab') {
+    if (!slotNames.includes(message.slot)) return failure(message.callId, 'INVALID_CALL');
+    const entry = [...pancakeTabs.entries()].find(([, value]) => value.slot === message.slot);
+    if (!entry) return failure(message.callId, 'NO_TAB');
+    const tabId = entry[0];
+    await chrome.tabs.reload(tabId);
+    return { ok: true };
   }
   if (message.type !== 'pdb-call') return failure(message.callId, 'INVALID_CALL');
   if (!settings.bridgeEnabled) return failure(message.callId, 'BRIDGE_DISABLED');
