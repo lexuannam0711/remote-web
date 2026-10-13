@@ -133,6 +133,57 @@ test('invalid calls never post code; destroy rejects outstanding calls and remov
   await assert.rejects(h.adapter.call('bot1', 'getDomStatus'), { code: 'DESTROYED' });
 });
 
+test('adapter sinh dung frame cho navigateTab, reloadTab va openTab', async () => {
+  const h = harness();
+  const nav = h.adapter.navigateTab('bot1', 'https://pages.fm/conv1');
+  const rel = h.adapter.reloadTab('bot2');
+  const openWith = h.adapter.openTab('https://pages.fm/custom');
+  const openEmpty = h.adapter.openTab();
+
+  assert.equal(h.sent.length, 4);
+  assert.deepEqual(h.sent[0], {
+    source: 'pdb-page',
+    type: 'navigate-tab',
+    callId: h.sent[0].callId,
+    slot: 'bot1',
+    url: 'https://pages.fm/conv1'
+  });
+  assert.deepEqual(h.sent[1], {
+    source: 'pdb-page',
+    type: 'reload-pancake-tab',
+    callId: h.sent[1].callId,
+    slot: 'bot2'
+  });
+  assert.deepEqual(h.sent[2], {
+    source: 'pdb-page',
+    type: 'open-pancake-tab',
+    callId: h.sent[2].callId,
+    url: 'https://pages.fm/custom'
+  });
+  assert.deepEqual(h.sent[3], {
+    source: 'pdb-page',
+    type: 'open-pancake-tab',
+    callId: h.sent[3].callId
+  });
+
+  h.emit(result(h.sent[0].callId, { ok: true, data: { tabId: 10 } }));
+  h.emit(result(h.sent[1].callId, { ok: true, data: true }));
+  h.emit(result(h.sent[2].callId, { ok: true, data: { tabId: 20 } }));
+  h.emit(result(h.sent[3].callId, { ok: true, data: { tabId: 21 } }));
+
+  assert.deepEqual(await nav, { tabId: 10 });
+  assert.equal(await rel, true);
+  assert.deepEqual(await openWith, { tabId: 20 });
+  assert.deepEqual(await openEmpty, { tabId: 21 });
+
+  await assert.rejects(h.adapter.navigateTab('bad_slot', 'https://pages.fm/'), { code: 'INVALID_CALL' });
+  await assert.rejects(h.adapter.navigateTab('bot1', ''), { code: 'INVALID_CALL' });
+  await assert.rejects(h.adapter.reloadTab('bad_slot'), { code: 'INVALID_CALL' });
+  await assert.rejects(h.adapter.openTab(123), { code: 'INVALID_CALL' });
+
+  h.adapter.destroy();
+});
+
 test('env defaults to current origin', () => {
   const context = { window: { location: { origin: 'https://dashboard.example' } } };
   vm.runInNewContext(fs.readFileSync(path.join(__dirname, '../web/public/env.js'), 'utf8'), context);

@@ -78,15 +78,24 @@ function background() {
   const local = { bridgeEnabled: true };
   const transport = { fail: false };
   const created = [];
+  const updatedTabs = [];
+  const reloadedTabs = [];
   const chrome = {
     runtime: { getURL: (file) => `chrome-extension://extension/${file}`, getManifest: () => ({ content_scripts: [{ matches: src }, { matches: dashboard }] }), onMessage: { addListener: (fn) => { listener = fn; } } },
     storage: { local: { get: async () => local, set: async (value) => Object.assign(local, value) }, session: { get: async () => state, set: async (value) => { state = value; } } },
-    tabs: { create: async (options) => { created.push(options); return { id: 20 }; }, sendMessage: async (id, message) => { sent.push({ id, message }); if (transport.fail) throw new Error('No receiver'); return { type: 'pdb-result', callId: message.callId, ok: true, data: 'result' }; }, onRemoved: { addListener: (fn) => { removed = fn; } }, onUpdated: { addListener: (fn) => { updated = fn; } } }
+    tabs: {
+      create: async (options) => { created.push(options); return { id: 20 }; },
+      update: async (id, options) => { updatedTabs.push({ id, options }); return { id, ...options }; },
+      reload: async (id) => { reloadedTabs.push(id); },
+      sendMessage: async (id, message) => { sent.push({ id, message }); if (transport.fail) throw new Error('No receiver'); return { type: 'pdb-result', callId: message.callId, ok: true, data: 'result' }; },
+      onRemoved: { addListener: (fn) => { removed = fn; } },
+      onUpdated: { addListener: (fn) => { updated = fn; } }
+    }
   };
   function restart() { load('background.js', { chrome, URL, Date, Map, Set }); }
   restart();
   const call = (message, id, url, frameId = 0) => new Promise((resolve) => assert.equal(listener(message, { id: 'extension', ...(id === undefined ? {} : { tab: { id } }), url, frameId }, resolve), true));
-  return { call, sent, restart, remove: async (id) => removed(id), update: async (id, changeInfo, tab) => updated(id, changeInfo, tab), local, transport, created };
+  return { call, sent, restart, remove: async (id) => removed(id), update: async (id, changeInfo, tab) => updated(id, changeInfo, tab), local, transport, created, updatedTabs, reloadedTabs };
 }
 
 test('background slots: limit, relay, trusted senders, release, restart and toggle', async () => {
@@ -247,4 +256,84 @@ test('popup displays URLs as text, toggles storage and opens through background'
   assert.equal(elements.toggle.textContent, 'Bat bridge');
   await elements.open.click();
   assert.equal(requests.at(-1).type, 'open-pancake-tab');
+});
+
+test('background and dashboard bridge handle navigate-tab, reload-pancake-tab, and open-pancake-tab with url', async () => {
+  const bg = background();
+  const url = 'http://localhost:8787/';
+
+  // 1. navigate-tab: slot có tab + url https://pages.fm/x -> fake chrome.tabs.update gọi đúng (tabId, {url}); kết quả {ok:true}
+  await bg.call({ type: 'tab-hello', url: 'https://pages.fm/chat' }, 1, 'https://pages.fm/chat');
+  const navOk = await bg.call({ type: 'navigate-tab', callId: 'nav-1', slot: 'bot1', url: 'https://pages.fm/x' }, 10, url);
+  assert.equal(navOk.ok, true);
+  assert.equal(navOk.tabId, 1);
+  assert.equal(bg.updatedTabs.at(-1).id, 1);
+  assert.equal(bg.updatedTabs.at(-1).options.url, 'https://pages.fm/x');
+
+  // 2. navigate-tab: url 'https://evil.example/x' -> INVALID_URL; slot trống -> NO_TAB
+  const navEvil = await bg.call({ type: 'navigate-tab', callId: 'nav-2', slot: 'bot1', url: 'https://evil.example/x' }, 10, url);
+  assert.equal(navEvil.error?.code, 'INVALID_URL');
+  const navNoTab = await bg.call({ type: 'navigate-tab', callId: 'nav-3', slot: 'bot2', url: 'https://pages.fm/x' }, 10, url);
+  assert.equal(navNoTab.error?.code, 'NO_TAB');
+
+  // 3. reload-pancake-tab: có tab -> chrome.tabs.reload được gọi, {ok:true}; trống -> NO_TAB
+  const relOk = await bg.call({ type: 'reload-pancake-tab', callId: 'rel-1', slot: 'bot1' }, 10, url);
+  assert.equal(relOk.ok, true);
+  assert.equal(bg.reloadedTabs.at(-1), 1);
+  const relNoTab = await bg.call({ type: 'reload-pancake-tab', callId: 'rel-2', slot: 'bot2' }, 10, url);
+  assert.equal(relNoTab.error?.code, 'NO_TAB');
+
+  // 4. open-pancake-tab: có url -> chrome.tabs.create với url đó; không url -> create với settings.pancakeUrl
+  const openWithUrl = await bg.call({ type: 'open-pancake-tab', callId: 'op-1', url: 'https://pages.fm/direct' }, 10, url);
+  assert.equal(openWithUrl.tabId, 20);
+  assert.equal(bg.created.at(-1).url, 'https://pages.fm/direct');
+
+  bg.local.pancakeUrl = 'https://pages.fm/default';
+  const openNoUrl = await bg.call({ type: 'open-pancake-tab', callId: 'op-2' }, 10, url);
+  assert.equal(openNoUrl.tabId, 20);
+  assert.equal(bg.created.at(-1).url, 'https://pages.fm/default');
+
+  const openEvil = await bg.call({ type: 'open-pancake-tab', callId: 'op-3', url: 'https://evil.example/bad' }, 10, url);
+  assert.equal(openEvil.error?.code, 'INVALID_URL');
+
+  // 5. navigate-tab từ sender URL lạ (https://evil.example/) -> UNTRUSTED_SENDER (xếp chồng luật cũ)
+  const navUntrusted = await bg.call({ type: 'navigate-tab', callId: 'nav-4', slot: 'bot1', url: 'https://pages.fm/x' }, 11, 'https://evil.example/');
+  assert.equal(navUntrusted.error?.code, 'UNTRUSTED_SENDER');
+
+  // Dashboard bridge tests for navigate-tab and reload-pancake-tab
+  let pageListener;
+  const posts = [], sent = [];
+  const window = {
+    location: { origin: 'http://localhost:8787' },
+    addEventListener: (name, fn) => { pageListener = fn; },
+    postMessage: (message, targetOrigin) => posts.push({ message, origin: targetOrigin })
+  };
+  const chrome = {
+    runtime: {
+      sendMessage: async (message) => {
+        sent.push(message);
+        if (message.type === 'navigate-tab') return { ok: true, callId: message.callId, tabId: 1 };
+        if (message.type === 'reload-pancake-tab') return { ok: true, callId: message.callId };
+        return { ok: true, callId: message.callId, slots: [] };
+      },
+      onMessage: { addListener() {} }
+    }
+  };
+  load('dashboard-bridge.js', { window, chrome });
+  await new Promise(setImmediate);
+
+  await pageListener({ source: window, origin: window.location.origin, data: { source: 'pdb-page', type: 'navigate-tab', callId: 'db-nav', slot: 'bot1', url: 'https://pages.fm/x' } });
+  assert.equal(sent.at(-1).type, 'navigate-tab');
+  assert.equal(sent.at(-1).url, 'https://pages.fm/x');
+  assert.equal(posts.at(-1).message.type, 'pdb-result');
+  assert.equal(posts.at(-1).message.callId, 'db-nav');
+  assert.equal(posts.at(-1).message.ok, true);
+  assert.equal(posts.at(-1).message.data.tabId, 1);
+
+  await pageListener({ source: window, origin: window.location.origin, data: { source: 'pdb-page', type: 'reload-pancake-tab', callId: 'db-rel', slot: 'bot1' } });
+  assert.equal(sent.at(-1).type, 'reload-pancake-tab');
+  assert.equal(posts.at(-1).message.type, 'pdb-result');
+  assert.equal(posts.at(-1).message.callId, 'db-rel');
+  assert.equal(posts.at(-1).message.ok, true);
+  assert.equal(posts.at(-1).message.data, true);
 });

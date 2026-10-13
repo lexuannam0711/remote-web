@@ -83,8 +83,61 @@
       });
     }
 
+    function navigateTab(slot, url) {
+      if (destroyed) return Promise.reject(failure('DESTROYED', 'Adapter destroyed'));
+      if (!slotNames.includes(slot) || typeof url !== 'string' || !url) {
+        return Promise.reject(failure('INVALID_CALL', 'Invalid slot or url'));
+      }
+      const callId = `pdb-call-${++nextCallId}`;
+      return new Promise((resolve, reject) => {
+        const timer = setTimeout(() => {
+          calls.delete(callId);
+          reject(failure('TIMEOUT', 'Bridge call timed out: navigate-tab'));
+        }, timeoutMs);
+        calls.set(callId, { resolve, reject, timer });
+        try { postMessage({ source: 'pdb-page', type: 'navigate-tab', callId, slot, url }, page.location?.origin); }
+        catch (error) { clearTimeout(timer); calls.delete(callId); reject(error); }
+      });
+    }
+
+    function reloadTab(slot) {
+      if (destroyed) return Promise.reject(failure('DESTROYED', 'Adapter destroyed'));
+      if (!slotNames.includes(slot)) {
+        return Promise.reject(failure('INVALID_CALL', 'Invalid slot'));
+      }
+      const callId = `pdb-call-${++nextCallId}`;
+      return new Promise((resolve, reject) => {
+        const timer = setTimeout(() => {
+          calls.delete(callId);
+          reject(failure('TIMEOUT', 'Bridge call timed out: reload-pancake-tab'));
+        }, timeoutMs);
+        calls.set(callId, { resolve, reject, timer });
+        try { postMessage({ source: 'pdb-page', type: 'reload-pancake-tab', callId, slot }, page.location?.origin); }
+        catch (error) { clearTimeout(timer); calls.delete(callId); reject(error); }
+      });
+    }
+
+    function openTab(url) {
+      if (destroyed) return Promise.reject(failure('DESTROYED', 'Adapter destroyed'));
+      if (url !== undefined && (typeof url !== 'string' || !url)) {
+        return Promise.reject(failure('INVALID_CALL', 'Invalid url'));
+      }
+      const callId = `pdb-call-${++nextCallId}`;
+      const payload = { source: 'pdb-page', type: 'open-pancake-tab', callId };
+      if (typeof url === 'string' && url) payload.url = url;
+      return new Promise((resolve, reject) => {
+        const timer = setTimeout(() => {
+          calls.delete(callId);
+          reject(failure('TIMEOUT', 'Bridge call timed out: open-pancake-tab'));
+        }, timeoutMs);
+        calls.set(callId, { resolve, reject, timer });
+        try { postMessage(payload, page.location?.origin); }
+        catch (error) { clearTimeout(timer); calls.delete(callId); reject(error); }
+      });
+    }
+
     return {
-      call, ping, listSlots,
+      call, ping, listSlots, navigateTab, reloadTab, openTab,
       setBotActive: (payload) => Promise.resolve({ accepted: true, active: Boolean(payload && payload.active) }),
       onSlotsChanged(cb) {
         if (typeof cb !== 'function') throw new TypeError('Expected callback');

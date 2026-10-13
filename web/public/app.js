@@ -28,7 +28,16 @@ window.pancakeDesktop = {
 
 function openPancakeTab(url = pancakeUrl) {
   if (!window.PDBPancakeUrlPolicy.isAllowedAutomationUrl(url)) throw new Error('URL Pancake không hợp lệ');
-  openExternal(url);
+  return (async () => {
+    try {
+      const alive = await adapter.ping();
+      if (alive) {
+        await adapter.openTab(url);
+        return;
+      }
+    } catch (_) {}
+    openExternal(url);
+  })();
 }
 
 async function checkBridge() {
@@ -1848,7 +1857,11 @@ async function navigateToConversation(item, tabId = getReviewTargetTabId()) {
   const tab = getTab(tabId);
   if (/^https?:\/\//.test(item.pancakeUrl || '')) {   // Req 3.3
     if (!window.PDBPancakeUrlPolicy.isAllowedAutomationUrl(item.pancakeUrl)) return false;
-    openExternal(item.pancakeUrl);
+    try {
+      await adapter.navigateTab(tab.id, item.pancakeUrl);
+    } catch (_) {
+      openExternal(item.pancakeUrl);
+    }
     return true;
   }
   if (item.conversationId) {                            // Req 3.4
@@ -2031,7 +2044,14 @@ function bindUi() {
   $('goBtn').addEventListener('click', () => {
     openPancakeTab($('urlInput').value.trim() || pancakeUrl);
   });
-  $('reloadBtn').addEventListener('click', checkBridge);
+  $('reloadBtn').addEventListener('click', async () => {
+    try {
+      await adapter.reloadTab(activeWvTab);
+    } catch (e) {
+      toast('Lỗi reload tab: ' + (e?.message || e), 5000);
+    }
+    await checkBridge();
+  });
   $('saveSettingsBtn').addEventListener('click', saveSettingsFromUi);
   if ($('testTtsBtn')) {
     $('testTtsBtn').addEventListener('click', async () => {
