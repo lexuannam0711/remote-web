@@ -50,7 +50,8 @@ const loginPage = () => `<!doctype html><html lang="vi"><meta charset="utf-8"><t
 
 function createWebApp({ env = process.env, auth, lease = createLease(), webRoot = path.resolve(__dirname, '../../web/public'), telegramBot, appFactory, store, supabaseFetch, supabaseState, logger = console } = {}) {
   if (typeof env.WEB_ACCESS_TOKEN !== 'string' || !env.WEB_ACCESS_TOKEN.trim()) throw new Error('WEB_ACCESS_TOKEN is required for web mode');
-  const webAuth = auth || createAuth({ token: env.WEB_ACCESS_TOKEN, sessionTtlMs: Number(env.SESSION_TTL_HOURS || 72) * 3600000 });
+  const ipOf = String(env.TRUST_PROXY || '') === '1' ? (req) => String(req.headers['x-forwarded-for'] || '').split(',')[0].trim() || (req.socket?.remoteAddress || 'unknown') : undefined;
+  const webAuth = auth || createAuth({ token: env.WEB_ACCESS_TOKEN, sessionTtlMs: Number(env.SESSION_TTL_HOURS || 72) * 3600000, ipOf });
   // Trạng thái Supabase nằm ở server/data/supabase.json — file này đã bị
   // .gitignore chặn theo luật "server/data/*.json" (kho public không lộ owner).
   const supabaseConfig = resolveSupabaseConfig(env);
@@ -59,6 +60,7 @@ function createWebApp({ env = process.env, auth, lease = createLease(), webRoot 
     auth: webAuth,
     env,
     logger,
+    ipOf,
     fetchImpl: supabaseFetch,
     state: supabaseState || {
       load: async () => {
