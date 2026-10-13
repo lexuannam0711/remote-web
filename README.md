@@ -181,7 +181,7 @@ cd /f/CODE/botcake-v5/pancake-web-bot && npm run check
 cd /f/CODE/botcake-v5/pancake-web-bot && npm test
 ```
 - **Phạm vi:** Chạy toàn bộ 20 tệp kiểm thử `test/*.test.js` bằng bộ chạy kiểm thử tích hợp `node --test` [package.json:9].
-- **Kỳ vọng:** **208 tests pass, 0 fail, 0 skipped**. Thời gian chạy ~2.6 giây.
+- **Kỳ vọng:** **214 tests pass, 0 fail, 0 skipped**. Thời gian chạy ~2.6 giây.
 
 ### 6.3. Kiểm thử đầu cuối Cầu nối Extension (E2E Bridge Spec)
 ```bash
@@ -218,7 +218,198 @@ nhường toàn bộ quyền nhận lệnh Telegram (`/status`, `/baocao`, duy�
 
 ---
 
-## 8. Giới Hạn Hiện Tại & Lộ Trình
+## 8. Hướng Dẫn Triển Khai VPS Linux
+
+Tài liệu hướng dẫn triển khai hệ thống Pancake Web Bot lên máy chủ ảo VPS Linux (Ubuntu / Debian / Rocky Linux) phục vụ truy cập qua mạng Internet hoặc mạng nội bộ công ty.
+
+### 8.1. Kiến Trúc Vận Hành & Hai Lỗi Gốc Cần Khắc Phục
+
+**Mô hình kiến trúc:**
+- **Mặt tiền (Frontend / Reverse Proxy):** Caddy hoặc Nginx lắng nghe cổng 80/443 với tên miền riêng (ví dụ `https://bot.ten-mien-cua-admin.com`), đảm nhiệm cấp phát chứng chỉ SSL/TLS và chuyển tiếp (reverse proxy) tới cổng nội bộ `127.0.0.1:8787`. Proxy bắt buộc gửi header `X-Forwarded-Proto: https`.
+- **Máy chủ Backend (`src/server/web.js`):** Luôn giữ cấu hình `WEB_BIND_HOST=127.0.0.1` (giao diện loopback cục bộ). Vì proxy đóng vai trò mặt tiền tiếp nhận mọi kết nối bên ngoài, hệ thống **KHÔNG cần bật** `WEB_ALLOW_PUBLIC=1`.
+- **Máy trạm nhân viên (Client Workstations):** Trình duyệt Chrome của từng nhân viên truy cập Web Dashboard qua HTTPS và nạp Extension MV3 (`extensions/pancake-bot`) để kết nối tự động hóa với tab Pancake (`pages.fm`).
+
+**Hai lỗi gốc khi truy cập từ máy khác (đã chẩn đoán & giải pháp):**
+1. **Extension Bridge không hoạt động:** Tiện ích mở rộng mặc định chỉ khai báo khớp `http://localhost:8787/*` và `http://127.0.0.1:8787/*` [extensions/pancake-bot/manifest.json:17-18, 41-42]. Khi nhân viên mở Dashboard bằng tên miền VPS (`https://bot.ten-mien-cua-admin.com`), Chrome từ chối tiêm `dashboard-bridge.js`. Khắc phục bằng cách chạy script build extension với tham số `--dashboard` tương ứng tên miền (xem mục 8.4).
+2. **Lỗi HTTP 403 Forbidden trên các request ghi:** Cơ chế CSRF Gate [src/server/web.js:43-44, 116] sẽ từ chối toàn bộ request thay đổi dữ liệu (`POST`, `PUT`, `DELETE`) nếu `Host` hoặc `Origin` của tên miền VPS chưa được khai báo trong `WEB_ALLOWED_ORIGIN` hoặc `WEB_ALLOWED_HOSTS`. Khắc phục bằng cách cấu hình đúng whitelist trong file `.env` (xem mục 8.2).
+
+> [!CAUTION]
+> **CẢNH BÁO: CHỈ CHẠY MỘT TIẾN TRÌNH DUY NHẤT (SINGLE PROCESS ONLY)**
+> Cơ chế chiếm quyền điều khiển bot (`Bot Lease`) được thiết kế lưu trữ trong bộ nhớ in-memory của tiến trình [src/server/auth.js:115: *"process-local soft lease; use a DB for multiple server processes"*]. Do đó, máy chủ **BẮT BUỘC chỉ chạy đúng 1 tiến trình duy nhất** thông qua systemd service. **TUYỆT ĐỐI KHÔNG** sử dụng PM2 cluster mode (`instances: 'max'`) hoặc chạy song song nhiều worker/instance, vì sẽ làm gãy cơ chế khóa lease và gây xung đột gửi đúp tin nhắn giữa các máy nhân viên.
+
+---
+
+### 8.2. Checklist Cấu Hình Biến Môi Trường (`.env`) Trên VPS
+
+Sao chép `.env.example` thành `.env` trên VPS và thiết lập các biến sau:
+
+| Tên Biến | Giá Trị Khuyến Nghị Trên VPS | Giải Thích & Tác Dụng |
+| :--- | :--- | :--- |
+| **`WEB_BIND_HOST`** | `127.0.0.1` | Giữ server lắng nghe loopback nội bộ; không mở trực tiếp ra ngoài Internet vì reverse proxy là mặt tiền công khai. Không cần đặt `WEB_ALLOW_PUBLIC=1`. |
+| **`PORT`** | `8787` | Cổng TCP nội bộ Express server lắng nghe, khớp với cổng proxy_pass của reverse proxy. |
+| **`WEB_ALLOWED_ORIGIN`** | `https://bot.ten-mien-cua-admin.com` | Whitelist Origin chính thức của Dashboard để vượt qua bộ lọc CSRF Gate (`POST`/`PUT`/`DELETE`) và cấu hình CORS. |
+| **`WEB_ALLOWED_HOSTS`** | `bot.ten-mien-cua-admin.com` | Whitelist Host header tin cậy khi request đi qua proxy. Nếu còn truy cập song song bằng địa chỉ IP VPS, thêm IP vào danh sách (phân tách bằng dấu phẩy, ví dụ `bot.ten-mien-cua-admin.com,192.168.1.100`). |
+| **`TRUST_PROXY`** | `1` | Sau reverse proxy (Caddy/Nginx), đặt `1` để bộ giới hạn tốc độ đăng nhập (Rate Limiter chống brute force) lấy đúng IP thật của máy client từ header `X-Forwarded-For` thay vì IP loopback của proxy. |
+| **`WEB_ACCESS_TOKEN`** | `pdb-xxxxxxxx-thay-bang-cua-ban` | Token bí mật quản trị dùng để bootstrap tài khoản chủ sở hữu (Owner) qua Supabase lần đầu tiên (xem mục 5b / CLAUDE.md mục 7). Sau bootstrap, token này tự động hết hạn sử dụng. |
+| **`WEB_SUPABASE_URL`** | `https://<project-ref>.supabase.co` | URL dự án Supabase để xác thực tài khoản nhân viên và chủ sở hữu. |
+| **`WEB_SUPABASE_ANON_KEY`**| *(anon key từ Supabase)* | Public anon key của Supabase (chỉ dùng anon key, tuyệt đối không dùng service role key). |
+| **`WEB_TELEGRAM_POLLING`** | `1` (hoặc `0`) | Bật `1` để nhận lệnh điều khiển từ xa qua Telegram trên VPS; đặt `0` nếu máy trạm Desktop đang chạy cùng lúc chung một bot token nhằm tránh xung đột HTTP 409 Conflict (xem mục 7). |
+| **`SESSION_TTL_HOURS`** | `72` | Thời gian sống của phiên làm việc cookie (mặc định 72 giờ). |
+
+---
+
+### 8.3. Cấu Hình Reverse Proxy (Caddy & Nginx)
+
+Reverse proxy bắt buộc chuyển tiếp header `X-Forwarded-Proto: https` để backend nhận diện đúng giao thức HTTPS, giúp đối chiếu Origin hợp lệ và tự động gắn thuộc tính `Secure` cho cookie phiên làm việc `pdb_session`.
+
+#### Tùy chọn A: Caddy (Khuyến nghị — Cấu hình tối giản & Tự động SSL)
+Caddy tự động đăng ký và gia hạn chứng chỉ HTTPS qua Let's Encrypt, đồng thời tự động thiết lập các header chuyển tiếp cần thiết (`X-Forwarded-For`, `X-Forwarded-Proto`):
+
+Tạo hoặc cập nhật file `/etc/caddy/Caddyfile`:
+```caddy
+bot.ten-mien-cua-admin.com {
+    reverse_proxy 127.0.0.1:8787
+}
+```
+Khởi động lại Caddy:
+```bash
+sudo systemctl reload caddy
+```
+
+#### Tùy chọn B: Nginx
+Nếu sử dụng Nginx, cấu hình block `server` và `location` chuyển tiếp kèm các header proxy:
+
+Tạo file `/etc/nginx/sites-available/pancake-bot.conf`:
+```nginx
+server {
+    listen 80;
+    server_name bot.ten-mien-cua-admin.com;
+    return 301 https://$host$request_uri;
+}
+
+server {
+    listen 443 ssl http2;
+    server_name bot.ten-mien-cua-admin.com;
+
+    # Cấu hình chứng chỉ SSL (Let's Encrypt Certbot)
+    ssl_certificate /etc/letsencrypt/live/bot.ten-mien-cua-admin.com/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/bot.ten-mien-cua-admin.com/privkey.pem;
+
+    location / {
+        proxy_pass http://127.0.0.1:8787;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+}
+```
+Kiểm tra cú pháp và kích hoạt:
+```bash
+sudo nginx -t && sudo systemctl reload nginx
+```
+
+---
+
+### 8.4. Đóng Gói & Cài Đặt Extension MV3 Cho Tên Miền VPS
+
+#### Bước 1: Build lại extension theo origin của tên miền VPS
+Tại máy phát triển hoặc thư mục nguồn, chạy lệnh sau:
+```bash
+node scripts/build-extension.js --dashboard="https://bot.ten-mien-cua-admin.com/*"
+```
+> [!IMPORTANT]
+> - Cờ `--dashboard` có thể gọi nhiều lần để cộng dồn các origin (ví dụ vừa hỗ trợ localhost vừa hỗ trợ VPS: `node scripts/build-extension.js --dashboard="http://localhost:8787/*" --dashboard="https://bot.ten-mien-cua-admin.com/*"`).
+> - Nếu đổi `PORT` hoặc đổi tên miền, bắt buộc phải chạy lại lệnh build trên.
+> - **TUYỆT ĐỐI KHÔNG sửa thủ công `manifest.json`** vì `background.js` phụ thuộc nghiêm ngặt vào thứ tự mảng `content_scripts`: phần tử `[0]` là Pancake Bridge và phần tử `[1]` là Dashboard Bridge [scripts/build-extension.js:22]. Việc sửa tay rất dễ làm xáo trộn thứ tự và gây lỗi ngắt cầu nối.
+
+#### Bước 2: 3 bước nạp lại tiện ích trên từng máy nhân viên (Client Workstations)
+Sau khi build xong, đóng gói thư mục `extensions/pancake-bot` gửi cho từng nhân viên thực hiện:
+1. Mở trình duyệt Chrome / Brave / Edge và truy cập vào đường dẫn: `chrome://extensions`.
+2. Bật công tắc **Developer mode** (Chế độ dành cho nhà phát triển) ở góc trên bên phải.
+3. Bấm nút **Load unpacked** (Tải tiện ích đã giải nén) và chọn thư mục `extensions/pancake-bot`.
+   *(Nếu extension đã được nạp từ trước, chỉ cần bấm nút **Reload** 🔄 trên card extension để Chrome cập nhật manifest và bridge mới).*
+
+---
+
+### 8.5. Khởi Tạo Dịch Vụ Systemd Trên VPS
+
+Tạo tệp cấu hình dịch vụ `/etc/systemd/system/pancake-web.service`:
+```ini
+[Unit]
+Description=Pancake Web Bot Backend Server
+After=network.target
+
+[Service]
+Type=simple
+User=botuser
+WorkingDirectory=/opt/pancake-web-bot
+EnvironmentFile=/opt/pancake-web-bot/.env
+ExecStart=/usr/bin/node src/server/web.js
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+```
+
+Kích hoạt và quản lý tiến trình:
+```bash
+# Nạp lại cấu hình và kích hoạt tự khởi động cùng hệ thống
+sudo systemctl daemon-reload
+sudo systemctl enable --now pancake-web.service
+
+# Kiểm tra trạng thái hoạt động
+sudo systemctl status pancake-web.service
+
+# Xem nhật ký hoạt động thời gian thực
+sudo journalctl -u pancake-web.service -f
+```
+
+---
+
+### 8.6. Kiểm Tra & Tự Đánh Giá Từ Máy Lẻ (3 Lệnh Curl Tự Kiểm)
+
+Từ máy tính cá nhân của nhân viên hoặc máy bên ngoài mạng, mở terminal chạy 3 lệnh sau để kiểm tra máy chủ VPS:
+
+1. **Kiểm tra CSRF Gate với Origin hợp lệ (Kỳ vọng: HTTP 200):**
+   ```bash
+   curl -s -o /dev/null -w "%{http_code}\n" -X POST https://bot.ten-mien-cua-admin.com/api/bot-lease \
+     -H "Origin: https://bot.ten-mien-cua-admin.com" \
+     -H "Content-Type: application/json" \
+     -d '{"owner":"test-probe"}'
+   ```
+   - **Kỳ vọng:** Trả về mã `200`.
+   - **Xử lý nếu lỗi:** Nếu nhận `403 Forbidden`, kiểm tra lại xem tên miền đã được khai báo chính xác trong `WEB_ALLOWED_ORIGIN` hoặc `WEB_ALLOWED_HOSTS` trong file `.env` trên VPS chưa.
+
+2. **Kiểm tra luật an toàn chống giả mạo Origin (Kỳ vọng: HTTP 403):**
+   ```bash
+   curl -s -o /dev/null -w "%{http_code}\n" -X POST https://bot.ten-mien-cua-admin.com/api/bot-lease \
+     -H "Origin: null" \
+     -H "Content-Type: application/json" \
+     -d '{"owner":"test-probe"}'
+   ```
+   - **Kỳ vọng:** Trả về mã `403`.
+   - **Giải thích:** CSRF Gate luôn từ chối `Origin: null` (nguồn từ iframe sandboxed hoặc dữ liệu không an toàn). Đây là luật an ninh bắt buộc phải luôn hoạt động.
+
+3. **Kiểm tra trạng thái xác thực hệ thống (Kỳ vọng: HTTP 200 kèm JSON mode):**
+   ```bash
+   curl -s https://bot.ten-mien-cua-admin.com/api/auth/mode
+   ```
+   - **Kỳ vọng:** Trả về chuỗi JSON thông tin mode, ví dụ: `{"mode":"bootstrap",...}` hoặc `{"mode":"active",...}`.
+
+---
+
+### 8.7. Ghi Chú Quan Trọng Về Cookie Phiên Làm Việc (`SameSite=Strict`)
+
+- Cookie xác thực phiên làm việc `pdb_session` được cấu hình với chính sách bảo mật nghiêm ngặt `SameSite=Strict` [src/server/auth.js:42] nhằm ngăn chặn hoàn toàn các cuộc tấn công Cross-Site Request Forgery (CSRF).
+- **Hành vi theo thiết kế tiêu chuẩn:** Khi người dùng nhấn vào đường link Dashboard từ một trang web bên ngoài hoặc ứng dụng bên thứ ba (ví dụ: bấm link từ tin nhắn Telegram, nhóm Zalo, Facebook Messenger, tài liệu Google Docs...), trình duyệt Chromium/Firefox sẽ **tuyệt đối không gửi kèm cookie `pdb_session`** trong request đầu tiên. Khi đó, server sẽ chuyển hướng người dùng về trang đăng nhập `/api/auth/login`.
+- **Cách truy cập chuẩn của nhân viên:** Người dùng phải mở Dashboard bằng cách bấm vào **Bookmark (Dấu trang)** trên trình duyệt hoặc gõ trực tiếp URL `https://bot.ten-mien-cua-admin.com` trên thanh địa chỉ. Đây là cơ chế bảo mật tiêu chuẩn theo thiết kế an ninh của web, hoàn toàn không phải lỗi hệ thống.
+
+---
+
+## 9. Giới Hạn Hiện Tại & Lộ Trình
 
 1. **Chưa nghiệm thu với tài khoản Pancake thực tế:** Hệ thống hiện tại đã hoàn tất kiểm chứng tự động 192/192 test và Playwright E2E giả lập Chromium, nhưng cần bước chạy thực tế có tài khoản Pancake live và phiên đăng nhập thật của nhân viên bán hàng để đánh giá hiệu năng DOM Pancake thời gian thực.
 2. **Phase 2 (VPS / Docker Host / Headless Host) chưa được duyệt:** Hiện tại hệ thống được thiết kế chạy cục bộ (Phase 1 Local Workstation). Triển khai trên máy chủ đám mây (VPS/Cloud) cần được Admin đánh giá và phê duyệt độc lập.
