@@ -137,7 +137,7 @@ test('adapter sinh dung frame cho navigateTab, reloadTab va openTab', async () =
   const h = harness();
   const nav = h.adapter.navigateTab('bot1', 'https://pages.fm/conv1');
   const rel = h.adapter.reloadTab('bot2');
-  const openWith = h.adapter.openTab('https://pages.fm/custom');
+  const openWith = h.adapter.openTab('https://pages.fm/custom', 'bot2');
   const openEmpty = h.adapter.openTab();
 
   assert.equal(h.sent.length, 4);
@@ -158,7 +158,8 @@ test('adapter sinh dung frame cho navigateTab, reloadTab va openTab', async () =
     source: 'pdb-page',
     type: 'open-pancake-tab',
     callId: h.sent[2].callId,
-    url: 'https://pages.fm/custom'
+    url: 'https://pages.fm/custom',
+    slot: 'bot2'
   });
   assert.deepEqual(h.sent[3], {
     source: 'pdb-page',
@@ -180,6 +181,7 @@ test('adapter sinh dung frame cho navigateTab, reloadTab va openTab', async () =
   await assert.rejects(h.adapter.navigateTab('bot1', ''), { code: 'INVALID_CALL' });
   await assert.rejects(h.adapter.reloadTab('bad_slot'), { code: 'INVALID_CALL' });
   await assert.rejects(h.adapter.openTab(123), { code: 'INVALID_CALL' });
+  await assert.rejects(h.adapter.openTab('https://pages.fm/', 'bad_slot'), { code: 'INVALID_CALL' });
 
   h.adapter.destroy();
 });
@@ -389,6 +391,49 @@ test('loop heartbeat self-heals a stalled leaseTimer instead of failing writes (
   // Heartbeat phải có abort signal giới hạn để fetch treo không âm thầm làm hỏng lease.
   const lastExtend = h.requests.filter((r) => r.url === '/api/bot-lease' && r.options.body && JSON.parse(r.options.body).action === 'extend').at(-1);
   assert.ok(lastExtend.options.signal && lastExtend.options.signal.aborted === false);
+});
+
+test('transient lease errors do not stop a running bot (sudden-stop fix)', async () => {
+  const h = dashboardHarness();
+  await h.evaluate('acquireBotLease()');
+  h.evaluate('webviewTabs.bot1.runtime.botRunning = true;');
+  // 5xx (server restart/proxy) là tạm thời: giữ lease, bot tiếp tục chạy.
+  h.setStatus(500);
+  await h.evaluate('extendBotLease()');
+  await h.evaluate('loadLease()');
+  assert.equal(h.evaluate('ownsLease()'), true);
+  assert.equal(h.evaluate('anyRuntimeBotRunning()'), true);
+  assert.ok([...h.intervals.values()].some((i) => i.ms === 20000));
+  // Lỗi mạng hoàn toàn (fetch reject, không có HTTP status) cũng không dừng bot.
+  h.setStatus(200);
+  await h.evaluate('window.__realApi = api; api = async () => { throw new TypeError("Failed to fetch"); };');
+  await h.evaluate('extendBotLease()');
+  await h.evaluate('loadLease()');
+  assert.equal(h.evaluate('ownsLease()'), true);
+  assert.equal(h.evaluate('anyRuntimeBotRunning()'), true);
+  await h.evaluate('api = window.__realApi;');
+  // Riêng 401 (phiên hết hạn) vẫn fail-closed: dừng để tránh ghi khi mất phiên.
+  h.setStatus(401);
+  await h.evaluate('loadLease()');
+  assert.equal(h.evaluate('ownsLease()'), false);
+  assert.equal(h.evaluate('anyRuntimeBotRunning()'), false);
+});
+
+test('server forgetting a free lease re-acquires instead of stopping (sudden-stop fix)', async () => {
+  const h = dashboardHarness();
+  await h.evaluate('acquireBotLease()');
+  h.evaluate('webviewTabs.bot1.runtime.botRunning = true;');
+  // Server restart/TTL purge trả lease null nhưng không ai giữ → acquire lại.
+  h.setLease(null);
+  await h.evaluate('loadLease()');
+  assert.equal(h.evaluate('ownsLease()'), true);
+  assert.equal(h.evaluate('anyRuntimeBotRunning()'), true);
+  // Write gate cũng tự gia hạn một lần khi lease local vừa hết hạn.
+  h.setLease(null);
+  h.evaluate('heldLease = { owner: machineId, expiresAt: new Date(Date.now() - 1000).toISOString() };');
+  await h.evaluate("executeInTab('bot1','setReplyText',['/1'])");
+  assert.equal(h.evaluate('ownsLease()'), true);
+  assert.deepEqual(Array.from(h.calls.at(-1)).slice(0, 2), ['bot1', 'setReplyText']);
 });
 
 test('loop heartbeat stays terminal when another machine holds the lease', async () => {

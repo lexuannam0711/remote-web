@@ -202,12 +202,18 @@ function createWebApp({ env = process.env, auth, lease = createLease(), webRoot 
   app.get('/api/auth/users', supabase.requireOwner, supabase.listHandler);
   app.post('/api/auth/users/decide', supabase.requireOwner, express.json({ limit: '4kb' }), supabase.decideHandler);
   app.get('/api/env', (req, res) => res.json({ serverUrl: env.WEB_ALLOWED_ORIGIN || `${scheme(req)}://${req.get('host')}`, pancakeUrl: env.PREFERRED_PANCAKE_URL || 'https://pages.fm/' }));
+  // Lease scope lấy từ session phía server (không tin client): mỗi user Supabase
+  // có lease riêng; phiên token cổ điển dùng chung scope 'pdb'.
+  const leaseScope = (req) => {
+    const principal = webAuth.principal(req);
+    return principal?.kind === 'supabase' ? `user:${principal.userId}` : 'pdb';
+  };
   const leaseView = value => value ? { lease: { owner: value.owner, expiresAt: new Date(value.expiresAt).toISOString() } } : { lease: null };
-  app.get('/api/bot-lease', (_req, res) => res.json(leaseView(lease.current())));
+  app.get('/api/bot-lease', (req, res) => res.json(leaseView(lease.current(leaseScope(req)))));
   app.post('/api/bot-lease', express.json({ limit: '4kb' }), (req, res) => {
     const { machineId, action = 'acquire' } = req.body || {};
     if (typeof machineId !== 'string' || !machineId.trim() || machineId.length > 256 || !['acquire', 'release', 'extend'].includes(action)) return res.status(400).json({ error: 'Lease khong hop le' });
-    const result = lease[action](machineId);
+    const result = lease[action](machineId, leaseScope(req));
     if (!result.ok) return res.json({ ok: false, holder: result.holder, expiresAt: result.expiresAt ? new Date(result.expiresAt).toISOString() : undefined });
     return res.json(action === 'release' ? { ok: true } : { ok: true, lease: { owner: result.owner, expiresAt: new Date(result.expiresAt).toISOString() } });
   });

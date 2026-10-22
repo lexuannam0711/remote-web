@@ -1,7 +1,7 @@
 <!-- gitnexus:start -->
 # GitNexus — Code Intelligence
 
-This project is indexed by GitNexus as **pancake-web-bot** (2415 symbols, 4919 relationships, 196 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
+This project is indexed by GitNexus as **remote-web** (2602 symbols, 5192 relationships, 203 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
 
 > If any GitNexus tool warns the index is stale, run `npx gitnexus analyze` in terminal first.
 
@@ -24,10 +24,10 @@ This project is indexed by GitNexus as **pancake-web-bot** (2415 symbols, 4919 r
 
 | Resource | Use for |
 |----------|---------|
-| `gitnexus://repo/pancake-web-bot/context` | Codebase overview, check index freshness |
-| `gitnexus://repo/pancake-web-bot/clusters` | All functional areas |
-| `gitnexus://repo/pancake-web-bot/processes` | All execution flows |
-| `gitnexus://repo/pancake-web-bot/process/{name}` | Step-by-step execution trace |
+| `gitnexus://repo/remote-web/context` | Codebase overview, check index freshness |
+| `gitnexus://repo/remote-web/clusters` | All functional areas |
+| `gitnexus://repo/remote-web/processes` | All execution flows |
+| `gitnexus://repo/remote-web/process/{name}` | Step-by-step execution trace |
 
 ## CLI
 
@@ -41,3 +41,11 @@ This project is indexed by GitNexus as **pancake-web-bot** (2415 symbols, 4919 r
 | Index, status, clean, wiki CLI commands | `.claude/skills/gitnexus/gitnexus-cli/SKILL.md` |
 
 <!-- gitnexus:end -->
+
+## Context continuity
+
+- Qoder auto-compacts when the context approaches its limit; normal compaction preserves the task and needs no action.
+- Do not start a new session merely because auto-compaction ran.
+- Before the hard limit, or after repeated compaction failures, write `.agents/HANDOFF.md` with: objective, status (done / in progress / blocked), decisions, files touched, next commands, and open questions.
+- The user has authorized starting a new Qoder session to continue the work: `qoder -c --fork-session` (resume the latest conversation as a new session), or start a fresh Qoder session from Orca.
+- Every new session must read `.agents/HANDOFF.md` first when it exists, and keep it current until the work is complete.

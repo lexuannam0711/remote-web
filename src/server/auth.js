@@ -111,25 +111,36 @@ function createAuth({ token, sessionTtlMs = 72 * 3600000, rateWindowMs = 60000, 
 
 function createLease({ ttlMs = 60000, now = Date.now } = {}) {
   positive(ttlMs, 'ttlMs');
-  let lease = null;
+  // Mỗi user (scope do server xác định từ session) giữ lease riêng, nên nhiều
+  // user có thể chạy bot trên máy/trình duyệt của mình. Trong cùng một scope,
+  // machineId vẫn loại trừ lẫn nhau để chống double-send.
   // ponytail: process-local soft lease; use a DB for multiple server processes.
   // Client-provided owner is not a trusted identity or authorization boundary.
-  function current() {
-    if (lease && lease.expiresAt <= now()) lease = null;
-    return lease ? { ...lease } : null;
+  const leases = new Map();
+  function current(scope = '') {
+    const lease = leases.get(scope);
+    if (!lease) return null;
+    if (lease.expiresAt <= now()) { leases.delete(scope); return null; }
+    return { ...lease };
   }
-  function change(owner, action) {
+  function change(scope, owner, action) {
     if (typeof owner !== 'string' || !owner.trim() || owner.length > 256) throw new TypeError('Invalid lease owner');
-    const held = current();
+    const held = current(scope);
     if (held && held.owner !== owner) return { ok: false, holder: held.owner, expiresAt: held.expiresAt };
-    if (action === 'release') { lease = null; return { ok: true }; }
+    if (action === 'release') { leases.delete(scope); return { ok: true }; }
     // Frozen §4ter: acquire and extend behave identically when the lease is
     // free or expired (re-acquire); conflict with another owner still fails
     // closed above, so double-send stays prevented.
-    lease = { owner, expiresAt: now() + ttlMs };
+    const lease = { owner, expiresAt: now() + ttlMs };
+    leases.set(scope, lease);
     return { ok: true, ...lease };
   }
-  return { acquire: owner => change(owner, 'acquire'), release: owner => change(owner, 'release'), extend: owner => change(owner, 'extend'), current };
+  return {
+    acquire: (owner, scope = '') => change(scope, owner, 'acquire'),
+    release: (owner, scope = '') => change(scope, owner, 'release'),
+    extend: (owner, scope = '') => change(scope, owner, 'extend'),
+    current
+  };
 }
 
 module.exports = { createAuth, createLease, parseCookie };

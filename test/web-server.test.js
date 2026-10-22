@@ -151,6 +151,34 @@ test('lease direct API validates owner; extend re-acquires free/expired leases (
   assert.deepEqual(lease.extend('A'), { ok: true, owner: 'A', expiresAt: 2500 });
   assert.deepEqual(lease.extend('B'), { ok: false, holder: 'A', expiresAt: 2500 });
   assert.deepEqual(lease.release('C'), { ok: false, holder: 'A', expiresAt: 2500 });
+  // Scope khác (user khác) độc lập: lease của scope mặc định không chặn.
+  assert.deepEqual(lease.acquire('B', 'user-1'), { ok: true, owner: 'B', expiresAt: 2500 });
+  assert.equal(lease.current('').owner, 'A');
+  assert.equal(lease.current('user-1').owner, 'B');
+  assert.deepEqual(lease.release('A', 'user-1'), { ok: false, holder: 'B', expiresAt: 2500 });
+});
+
+test('bot lease is scoped per authenticated user, shared only inside one user', async t => {
+  const auth = createAuth({ token: 'secret-token' });
+  const lease = createLease();
+  const { request } = await fixture(t, { auth, lease });
+  const asUser = (userId) => {
+    const id = auth.issue({ headers: {}, secure: false }, { setHeader() {} }, { kind: 'supabase', userId, email: `${userId}@example.com`, owner: false });
+    return { Cookie: `pdb_session=${id}`, 'Content-Type': 'application/json' };
+  };
+  const user1 = asUser('user-1');
+  const user2 = asUser('user-2');
+  const act = async (headers, machineId, action = 'acquire') => (await request('/api/bot-lease', { method: 'POST', headers, body: JSON.stringify({ machineId, action }) })).json();
+  assert.equal((await act(user1, 'machine-1')).ok, true);
+  assert.equal((await act(user2, 'machine-2')).ok, true);
+  const conflict = await act(user1, 'machine-2');
+  assert.equal(conflict.ok, false);
+  assert.equal(conflict.holder, 'machine-1');
+  assert.equal((await (await request('/api/bot-lease', { headers: user1 })).json()).lease.owner, 'machine-1');
+  assert.equal((await (await request('/api/bot-lease', { headers: user2 })).json()).lease.owner, 'machine-2');
+  assert.equal((await act(user2, 'machine-2', 'release')).ok, true);
+  assert.equal((await (await request('/api/bot-lease', { headers: user2 })).json()).lease, null);
+  assert.equal((await (await request('/api/bot-lease', { headers: user1 })).json()).lease.owner, 'machine-1');
 });
 
 test('web validates login input and JSON body', async t => {
