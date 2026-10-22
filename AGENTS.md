@@ -1,6 +1,7 @@
 <!-- gitnexus:start -->
 # GitNexus — Code Intelligence
 
+This project is indexed by GitNexus as **remote-web** (2602 symbols, 5192 relationships, 203 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
 This project is indexed by GitNexus as **remote-web** (2623 symbols, 5217 relationships, 203 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
 
 > If any GitNexus tool warns the index is stale, run `npx gitnexus analyze` in terminal first.
@@ -41,3 +42,11 @@ This project is indexed by GitNexus as **remote-web** (2623 symbols, 5217 relati
 | Index, status, clean, wiki CLI commands | `.claude/skills/gitnexus/gitnexus-cli/SKILL.md` |
 
 <!-- gitnexus:end -->
+
+## Context continuity
+
+- Qoder auto-compacts when the context approaches its limit; normal compaction preserves the task and needs no action.
+- Do not start a new session merely because auto-compaction ran.
+- Before the hard limit, or after repeated compaction failures, write `.agents/HANDOFF.md` with: objective, status (done / in progress / blocked), decisions, files touched, next commands, and open questions.
+- The user has authorized starting a new Qoder session to continue the work: `qoder -c --fork-session` (resume the latest conversation as a new session), or start a fresh Qoder session from Orca.
+- Every new session must read `.agents/HANDOFF.md` first when it exists, and keep it current until the work is complete.

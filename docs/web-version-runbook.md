@@ -229,11 +229,13 @@ Sau khi chạy lệnh trên, Admin chỉ cần vào lại `chrome://extensions` 
        * **Bot 2:** Chưa kết nối (hoặc hiển thị tab Pancake thứ 2 nếu mở).
        * **Thủ công:** Chưa kết nối.
 5. **Bước 5: Cấp quyền can thiệp Bot (Bot Lease)**  
-   - Giao diện Dashboard quản lý quyền gửi phím tắt tự động thông qua cơ chế **Soft Lease** [src/server/auth.js:93-114].
+   - Giao diện Dashboard quản lý quyền gửi phím tắt tự động thông qua cơ chế **Soft Lease** [src/server/auth.js:112-144].
    - Mỗi tab Dashboard tự sinh một định danh máy `machineId` lưu trong `sessionStorage` của tab đó [web/public/app.js].
-   - Tab Dashboard hiện tại sẽ gửi yêu cầu cấp quyền `/api/bot-lease` (hành động `acquire`) [src/server/web.js:43-48].
+   - Tab Dashboard hiện tại sẽ gửi yêu cầu cấp quyền `/api/bot-lease` (hành động `acquire`) [src/server/web.js:212-219].
+   - Lease được scope theo user đăng nhập: mỗi user Supabase giữ lease riêng, nên nhiều user có thể chạy bot trên máy/trình duyệt khác nhau mà không chặn nhau. Phiên token cổ điển dùng chung scope `pdb`.
+   - Trong cùng một user, tab/máy thứ hai sẽ bị từ chối với lỗi `BOT_LEASE_REQUIRED` [web/public/app.js] nhằm ngăn chặn hai nơi cùng lúc gửi lệnh can thiệp trùng lặp.
+   - Lỗi mạng/5xx tạm thời (server restart, tab bị throttle) **không** làm bot dừng: dashboard giữ lease và tự gia hạn/acquire lại khi server đã quên lease trống. Bot chỉ dừng khi server xác nhận user/máy khác đang giữ lease hoặc phiên đăng nhập hết hiệu lực.
    - Khi huy hiệu **Lease** trên Dashboard hiển thị trạng thái màu xanh lá cây ("Đang giữ lease"), Dashboard mới có quyền gửi lệnh can thiệp DOM (như điền phím tắt `/1`) sang tab Pancake.
-   - Nếu có một máy tính khác hoặc một tab Dashboard khác truy cập, tab đó sẽ bị từ chối với lỗi `BOT_LEASE_REQUIRED` [web/public/app.js] nhằm ngăn chặn việc hai người cùng lúc gửi lệnh can thiệp trùng lặp vào cùng một khách hàng.
 
 ### 4.2. Bảng mã lỗi Extension & Cách xử lý từng loại
 

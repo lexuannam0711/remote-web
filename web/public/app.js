@@ -26,7 +26,7 @@ window.pancakeDesktop = {
   listExtensions: desktopOnly, reloadExtensions: desktopOnly, openExtensionsFolder: desktopOnly
 };
 
-function openPancakeTab(url = pancakeUrl) {
+function openPancakeTab(url = pancakeUrl, slot) {
   if (!window.PDBPancakeUrlPolicy.isAllowedAutomationUrl(url)) throw new Error('URL Pancake không hợp lệ');
   return (async () => {
     try {
@@ -59,7 +59,8 @@ let heldLease = null;
 let leaseTimer = null;
 // leaseEpoch increments on every loseLease(): in-flight extend responses that
 // come back AFTER a loss are ignored, so a late success can never resurrect the
-// lease and re-open the write gate (frozen §4ter: loss is terminal, no re-acquire).
+// lease and re-open the write gate. Loss is terminal only on a definitive
+// conflict (another machine holds it); transient network/5xx errors retry.
 let leaseEpoch = 0;
 const leaseWrites = new Set(['clickConversationById', 'setReplyText', 'clickSendButton', 'applyTagByName', 'markCurrentConversationUnread', 'clearReplyText']);
 function leaseExpiresAt(lease) {
@@ -156,11 +157,17 @@ async function loadLease() {
     const foreign = lease && lease.owner !== getMachineId() && leaseExpiresAt(lease) > Date.now();
     warning.hidden = !foreign;
     warning.textContent = foreign ? `${lease.owner} đang giữ bot lease` : '';
-    if (heldLease && (!lease || lease.owner !== machineId || leaseExpiresAt(lease) <= Date.now())) loseLease();
+    if (!heldLease) return;
+    if (foreign) { loseLease(); return; }
+    // Server quên lease (restart, TTL) nhưng không ai giữ: acquire lại thay vì
+    // dừng bot. Nếu người khác vừa chiếm, extend trả !ok và loseLease ở đó.
+    if (!lease) await extendBotLease();
   } catch (error) {
-    if (heldLease) loseLease();
     warning.hidden = error.status === 404;
     warning.textContent = error.status === 404 ? '' : 'Không xác minh được bot lease';
+    // Lỗi mạng/5xx là tạm thời: giữ lease và thử lại nhịp sau. Chỉ dừng khi
+    // phiên đăng nhập mất hiệu lực (401/403).
+    if (heldLease && (error.status === 401 || error.status === 403)) loseLease();
   }
 }
 let extendInFlight = null;
@@ -180,10 +187,22 @@ async function extendBotLease() {
       });
       // A late response after a loss must not resurrect the lease (MAJOR T5c).
       if (epoch !== leaseEpoch) return;
-      if (!data.ok || data.lease?.owner !== machineId || leaseExpiresAt(data.lease) <= Date.now()) throw new Error('Bot lease đã mất');
+      if (!data.ok || data.lease?.owner !== machineId) {
+        loseLease();
+        toast('Mất bot lease: Emergency Stop', 5000);
+        return;
+      }
       heldLease = data.lease;
-    } catch (_) {
-      if (epoch === leaseEpoch) { loseLease(); toast('Mất bot lease: Emergency Stop', 5000); }
+    } catch (error) {
+      if (epoch !== leaseEpoch) return;
+      const status = Number(error?.status || 0);
+      // Chỉ dừng khi server từ chối dứt khoát (4xx, trừ timeout/rate-limit).
+      // Lỗi mạng hoặc 5xx (server restart, tab bị throttle) là tạm thời:
+      // giữ lease và thử lại ở nhịp heartbeat/vòng lặp kế tiếp.
+      if (status >= 400 && status < 500 && status !== 408 && status !== 429) {
+        loseLease();
+        toast('Mất bot lease: Emergency Stop', 5000);
+      }
     } finally { extendInFlight = null; }
   })();
   return extendInFlight;
@@ -227,7 +246,7 @@ async function releaseBotLease() {
 
 function bindWebSession() {
   document.querySelectorAll('[data-open-slot]').forEach((btn) => btn.addEventListener('click', () => {
-    try { openPancakeTab(); } catch (error) { toast(error.message); }
+    try { openPancakeTab(pancakeUrl, btn.dataset.openSlot); } catch (error) { toast(error.message); }
   }));
   document.querySelectorAll('[data-ping-slot]').forEach((btn) => btn.addEventListener('click', checkBridge));
   $('acquireLeaseBtn').addEventListener('click', async () => {
@@ -575,8 +594,13 @@ function serializeError(error) {
 
 async function executeInTab(tabId, methodName, args = []) {
   if (leaseWrites.has(methodName) && !ownsLease()) {
-    loseLease();
-    throw Object.assign(new Error('Cần giữ bot lease trước khi thao tác Pancake'), { code: 'BOT_LEASE_REQUIRED' });
+    // Lease local hết hạn trong lúc mạng chập chờn: thử gia nhập lại một lần
+    // (server re-acquire nếu lease trống) trước khi dừng fail-closed.
+    if (heldLease) await extendBotLease();
+    if (!ownsLease()) {
+      loseLease();
+      throw Object.assign(new Error('Cần giữ bot lease trước khi thao tác Pancake'), { code: 'BOT_LEASE_REQUIRED' });
+    }
   }
   return adapter.call(tabId, methodName, args);
 }
