@@ -21,7 +21,7 @@ function positive(value, name) {
   if (!Number.isFinite(value) || value <= 0) throw new TypeError(`${name} must be positive`);
 }
 
-function createAuth({ token, sessionTtlMs = 72 * 3600000, rateWindowMs = 60000, rateMax = 10, now = Date.now } = {}) {
+function createAuth({ token, sessionTtlMs = 72 * 3600000, rateWindowMs = 60000, rateMax = 10, now = Date.now, ipOf = (req) => req.socket?.remoteAddress || 'unknown' } = {}) {
   if (typeof token !== 'string' || !token.trim()) throw new TypeError('Auth token is required');
   positive(sessionTtlMs, 'sessionTtlMs');
   positive(rateWindowMs, 'rateWindowMs');
@@ -38,7 +38,7 @@ function createAuth({ token, sessionTtlMs = 72 * 3600000, rateWindowMs = 60000, 
     for (const [ip, attempt] of attempts) if (attempt.expiresAt <= time) attempts.delete(ip);
   }
   function cookie(req, id, maxAge) {
-    const secure = req.secure || req.headers['x-forwarded-proto'] === 'https';
+    const secure = req.secure || String(req.headers['x-forwarded-proto'] || '').split(',')[0].trim() === 'https';
     return `pdb_session=${id}; HttpOnly; SameSite=Strict; Path=/; Max-Age=${maxAge}${secure ? '; Secure' : ''}`;
   }
   async function readBody(req) {
@@ -74,8 +74,8 @@ function createAuth({ token, sessionTtlMs = 72 * 3600000, rateWindowMs = 60000, 
   }
   async function login(req, res) {
     prune();
-    // Socket identity prevents rate-limit bypass via spoofed X-Forwarded-For.
-    const ip = req.socket?.remoteAddress || 'unknown';
+    // ipOf isolates buckets (per-socket by default; X-Forwarded-For when TRUST_PROXY=1).
+    const ip = ipOf(req);
     const attempt = attempts.get(ip);
     if (attempt && attempt.count >= rateMax) {
       res.setHeader('Retry-After', Math.max(1, Math.ceil((attempt.expiresAt - now()) / 1000)));

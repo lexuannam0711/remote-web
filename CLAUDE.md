@@ -17,7 +17,7 @@ cd /f/CODE/botcake-v5/pancake-web-bot && npm run check
 
 # 2. Kiểm thử đơn vị & tích hợp (Unit & Integration Tests) — 20 test suites
 cd /f/CODE/botcake-v5/pancake-web-bot && npm test
-# Kỳ vọng: 208 tests pass, 0 fail, 0 skipped, thời gian ~2.6 giây.
+# Kỳ vọng: 214 tests pass, 0 fail, 0 skipped, thời gian ~2.6 giây.
 
 # 3. Kiểm thử đầu cuối (E2E Bridge Spec) — Chromium headless
 cd /f/CODE/botcake-v5/pancake-web-bot && npx playwright test
@@ -134,6 +134,12 @@ Toàn bộ các yêu cầu bảo mật nghiêm ngặt từ bản vá bảo mật
      - `Content-Security-Policy: frame-ancestors 'none'`
 6. **Cách ly điều khiển Telegram (`WEB_TELEGRAM_POLLING`):**
    - Toàn bộ luồng khởi tạo Telegram polling và báo cáo định kỳ bị chặn lại nếu `WEB_TELEGRAM_POLLING === '0'` [src/server/web.js:175-193] để tránh lỗi HTTP 409 Conflict khi chạy song song với bản Desktop.
+7. **Giới hạn tốc độ đăng nhập:**
+   - Mặc định theo socket IP; khi `TRUST_PROXY=1` lấy phần tử ĐẦU của `X-Forwarded-For`.
+8. **Cờ Secure của cookie:**
+   - Xét `x-forwarded-proto` theo PHẦN TỬ ĐẦU của danh sách dấu phẩy (đồng bộ cách `scheme()` trong `web.js`), để chuỗi `'https, http'` vẫn gắn `Secure`.
+
+- Triển khai VPS Linux: xem README mục 8 — build extension theo origin, đặt WEB_ALLOWED_ORIGIN, chạy MỘT tiến trình duy nhất.
 
 ---
 
@@ -175,6 +181,7 @@ Toàn bộ các yêu cầu bảo mật nghiêm ngặt từ bản vá bảo mật
 # GitNexus — Code Intelligence
 
 This project is indexed by GitNexus as **remote-web** (2602 symbols, 5192 relationships, 203 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
+This project is indexed by GitNexus as **remote-web** (2623 symbols, 5217 relationships, 203 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
 
 > If any GitNexus tool warns the index is stale, run `npx gitnexus analyze` in terminal first.
 

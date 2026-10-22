@@ -323,3 +323,68 @@ test('web gates Telegram wiring behind WEB_TELEGRAM_POLLING (avoid token clash w
   t.after(() => new Promise(resolve => online.close(resolve)));
   assert.ok(calls.includes('poll') && calls.includes('daily') && calls.includes('up'));
 });
+
+test('TRUST_PROXY=1 giới hạn theo X-Forwarded-For, không theo socket của proxy', async t => {
+  const { login } = await fixture(t, { env: { WEB_ACCESS_TOKEN: 'secret-token', TRUST_PROXY: '1' } });
+  for (let i = 0; i < 10; i++) {
+    assert.equal((await login('wrong', { 'X-Forwarded-For': '10.0.0.1' })).status, 401);
+  }
+  const limited = await login('wrong', { 'X-Forwarded-For': '10.0.0.1' });
+  assert.equal(limited.status, 429);
+  const otherIp = await login('wrong', { 'X-Forwarded-For': '10.0.0.2' });
+  assert.equal(otherIp.status, 401);
+});
+
+test('mặc định không TRUST_PROXY: mọi XFF vẫn chung một bucket (back-compat)', async t => {
+  const { login } = await fixture(t);
+  for (let i = 0; i < 10; i++) {
+    assert.equal((await login('wrong', { 'X-Forwarded-For': '10.0.0.1' })).status, 401);
+  }
+  const limited = await login('wrong', { 'X-Forwarded-For': '10.0.0.2' });
+  assert.equal(limited.status, 429);
+});
+
+test('x-forwarded-proto chuỗi phẩy vẫn gắn cookie Secure', async t => {
+  const { login, url } = await fixture(t);
+  const host = new URL(url).host;
+  const res = await login('secret-token', {
+    'X-Forwarded-Proto': 'https, http',
+    Origin: `https://${host}`,
+  });
+  assert.equal(res.status, 200);
+  assert.match(res.headers.get('set-cookie') || '', /; Secure/);
+});
+
+test('WEB_ALLOWED_HOSTS mở CSRF gate cho host sau proxy', async t => {
+  const env = { WEB_ACCESS_TOKEN: 'secret-token', WEB_ALLOWED_HOSTS: 'bot.hosts.example' };
+  const { url } = await fixture(t, { env });
+  const port = new URL(url).port;
+  const rawLogin = (headers) => new Promise((resolve, reject) => {
+    const payload = JSON.stringify({ token: 'secret-token' });
+    const req = http.request({
+      host: '127.0.0.1',
+      port,
+      path: '/api/auth/login',
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Content-Length': Buffer.byteLength(payload),
+        'X-Forwarded-Proto': 'https',
+        ...headers,
+      },
+    }, res => {
+      let body = '';
+      res.on('data', chunk => { body += chunk; });
+      res.on('end', () => resolve({ status: res.statusCode, body }));
+    });
+    req.on('error', reject);
+    req.write(payload);
+    req.end();
+  });
+
+  const ok = await rawLogin({ Host: 'bot.hosts.example', Origin: 'https://bot.hosts.example' });
+  assert.equal(ok.status, 200);
+
+  const evil = await rawLogin({ Host: 'bot.evil.example', Origin: 'https://bot.evil.example' });
+  assert.equal(evil.status, 403);
+});

@@ -60,31 +60,31 @@ function createSupabaseVerifier({ config, fetchImpl, timeoutMs = 6000 } = {}) {
   return { verify };
 }
 
-// Bộ đếm giới hạn thô theo socket IP, đồng nhất luật với createAuth.login
-// (chống brute-force token/accessToken; không tin X-Forwarded-For).
-function createGuard({ windowMs = 60000, max = 10, now = Date.now } = {}) {
+// Bộ đếm giới hạn thô theo IP, đồng nhất luật với createAuth.login
+// (chống brute-force token/accessToken; hỗ trợ ipOf khi đứng sau proxy).
+function createGuard({ windowMs = 60000, max = 10, now = Date.now, ipOf = (req) => req.socket?.remoteAddress || 'unknown' } = {}) {
   const attempts = new Map();
   function prune() {
     const time = now();
     for (const [ip, entry] of attempts) if (entry.expiresAt <= time) attempts.delete(ip);
   }
   function remaining(req) {
-    const entry = attempts.get(req.socket?.remoteAddress || 'unknown');
+    const entry = attempts.get(ipOf(req));
     return entry && entry.count >= max ? Math.max(1, Math.ceil((entry.expiresAt - now()) / 1000)) : 0;
   }
   function fail(req) {
-    const ip = req.socket?.remoteAddress || 'unknown';
+    const ip = ipOf(req);
     prune();
     const entry = attempts.get(ip);
     attempts.set(ip, { count: (entry?.count || 0) + 1, expiresAt: entry?.expiresAt ?? now() + windowMs });
   }
-  function clear(req) { attempts.delete(req.socket?.remoteAddress || 'unknown'); }
+  function clear(req) { attempts.delete(ipOf(req)); }
   return { remaining, fail, clear, prune };
 }
 
-function createSupabaseAuth({ config, auth, env = {}, state, fetchImpl, timeoutMs, now = Date.now, logger = console } = {}) {
+function createSupabaseAuth({ config, auth, env = {}, state, fetchImpl, timeoutMs, now = Date.now, logger = console, ipOf } = {}) {
   const verifier = createSupabaseVerifier({ config, fetchImpl, timeoutMs });
-  const guard = createGuard({ now });
+  const guard = createGuard({ now, ipOf });
   const emergencyEnabled = () => String(env.WEB_PDB_EMERGENCY || '') === '1';
 
   async function loadState() {

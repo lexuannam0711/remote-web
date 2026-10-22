@@ -32,7 +32,7 @@ function openPancakeTab(url = pancakeUrl, slot) {
     try {
       const alive = await adapter.ping();
       if (alive) {
-        await adapter.openTab(url, slot);
+        await adapter.openTab(url);
         return;
       }
     } catch (_) {}

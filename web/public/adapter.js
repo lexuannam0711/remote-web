@@ -117,18 +117,14 @@
       });
     }
 
-    function openTab(url, slot) {
+    function openTab(url) {
       if (destroyed) return Promise.reject(failure('DESTROYED', 'Adapter destroyed'));
       if (url !== undefined && (typeof url !== 'string' || !url)) {
         return Promise.reject(failure('INVALID_CALL', 'Invalid url'));
       }
-      if (slot !== undefined && !slotNames.includes(slot)) {
-        return Promise.reject(failure('INVALID_CALL', 'Invalid slot'));
-      }
       const callId = `pdb-call-${++nextCallId}`;
       const payload = { source: 'pdb-page', type: 'open-pancake-tab', callId };
       if (typeof url === 'string' && url) payload.url = url;
-      if (slot !== undefined) payload.slot = slot;
       return new Promise((resolve, reject) => {
         const timer = setTimeout(() => {
           calls.delete(callId);

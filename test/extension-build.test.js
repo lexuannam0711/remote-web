@@ -296,25 +296,6 @@ test('background and dashboard bridge handle navigate-tab, reload-pancake-tab, a
   const openEvil = await bg.call({ type: 'open-pancake-tab', callId: 'op-3', url: 'https://evil.example/bad' }, 10, url);
   assert.equal(openEvil.error?.code, 'INVALID_URL');
 
-  // 4b. open-pancake-tab có slot -> gán thẳng slot đó; gọi lại thì dùng lại tab cũ.
-  const createdBeforeSlot = bg.created.length;
-  const openSlot = await bg.call({ type: 'open-pancake-tab', callId: 'op-4', slot: 'bot2', url: 'https://pages.fm/slot2' }, 10, url);
-  assert.equal(openSlot.tabId, 20);
-  assert.equal(bg.created.length, createdBeforeSlot + 1);
-  let slotState = (await bg.call({ type: 'get-slots' }, 10, url)).slots.find((slot) => slot.slot === 'bot2');
-  assert.equal(slotState.connected, true);
-  assert.equal(slotState.tabId, 20);
-  assert.equal(slotState.url, 'https://pages.fm/slot2');
-
-  const reopenSlot = await bg.call({ type: 'open-pancake-tab', callId: 'op-5', slot: 'bot2' }, 10, url);
-  assert.equal(reopenSlot.tabId, 20);
-  assert.equal(bg.created.length, createdBeforeSlot + 1);
-
-  const openBadSlot = await bg.call({ type: 'open-pancake-tab', callId: 'op-6', slot: 'bad', url: 'https://pages.fm/' }, 10, url);
-  assert.equal(openBadSlot.error?.code, 'INVALID_CALL');
-
-  assert.equal((await bg.call({ type: 'tab-hello', url: 'https://pages.fm/slot2' }, 20, 'https://pages.fm/slot2')).slot, 'bot2');
-
   // 5. navigate-tab từ sender URL lạ (https://evil.example/) -> UNTRUSTED_SENDER (xếp chồng luật cũ)
   const navUntrusted = await bg.call({ type: 'navigate-tab', callId: 'nav-4', slot: 'bot1', url: 'https://pages.fm/x' }, 11, 'https://evil.example/');
   assert.equal(navUntrusted.error?.code, 'UNTRUSTED_SENDER');

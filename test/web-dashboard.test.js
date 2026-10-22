@@ -137,7 +137,7 @@ test('adapter sinh dung frame cho navigateTab, reloadTab va openTab', async () =
   const h = harness();
   const nav = h.adapter.navigateTab('bot1', 'https://pages.fm/conv1');
   const rel = h.adapter.reloadTab('bot2');
-  const openWith = h.adapter.openTab('https://pages.fm/custom', 'bot2');
+  const openWith = h.adapter.openTab('https://pages.fm/custom');
   const openEmpty = h.adapter.openTab();
 
   assert.equal(h.sent.length, 4);
@@ -158,8 +158,7 @@ test('adapter sinh dung frame cho navigateTab, reloadTab va openTab', async () =
     source: 'pdb-page',
     type: 'open-pancake-tab',
     callId: h.sent[2].callId,
-    url: 'https://pages.fm/custom',
-    slot: 'bot2'
+    url: 'https://pages.fm/custom'
   });
   assert.deepEqual(h.sent[3], {
     source: 'pdb-page',
@@ -181,7 +180,6 @@ test('adapter sinh dung frame cho navigateTab, reloadTab va openTab', async () =
   await assert.rejects(h.adapter.navigateTab('bot1', ''), { code: 'INVALID_CALL' });
   await assert.rejects(h.adapter.reloadTab('bad_slot'), { code: 'INVALID_CALL' });
   await assert.rejects(h.adapter.openTab(123), { code: 'INVALID_CALL' });
-  await assert.rejects(h.adapter.openTab('https://pages.fm/', 'bad_slot'), { code: 'INVALID_CALL' });
 
   h.adapter.destroy();
 });

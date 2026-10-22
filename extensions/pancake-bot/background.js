@@ -62,16 +62,7 @@ async function handleMessage(message, sender) {
   if (message.type === 'open-pancake-tab') {
     const targetUrl = message.url !== undefined ? message.url : settings.pancakeUrl;
     if (typeof targetUrl !== 'string' || !matches(targetUrl, config[0].matches)) return failure(message.callId, 'INVALID_URL');
-    if (message.slot !== undefined && !slotNames.includes(message.slot)) return failure(message.callId, 'INVALID_CALL');
-    if (message.slot) {
-      const existing = [...pancakeTabs.entries()].find(([, value]) => value.slot === message.slot);
-      if (existing) return { ok: true, tabId: existing[0], reused: true };
-    }
     const tab = await chrome.tabs.create({ url: targetUrl });
-    if (message.slot) {
-      pancakeTabs.set(tab.id, { url: targetUrl, slot: message.slot, lastSeen: Date.now() });
-      await broadcast();
-    }
     return { ok: true, tabId: tab.id };
   }
   if (message.type === 'navigate-tab') {
