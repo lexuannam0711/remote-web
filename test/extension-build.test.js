@@ -11,7 +11,7 @@ const extension = path.join(root, 'extensions/pancake-bot');
 const vendor = ['pancakeDom.js', 'automation.js', 'pancakeUrlPolicy.js'];
 const scripts = ['background.js', 'pancake-bridge.js', 'dashboard-bridge.js', 'popup.js'];
 const src = ['https://pages.fm/*', 'https://pancake.vn/*', 'https://*.pages.fm/*', 'https://*.pancake.vn/*'];
-const dashboard = ['http://localhost:8787/*', 'http://127.0.0.1:8787/*'];
+const dashboard = ['http://localhost:8787/*', 'http://127.0.0.1:8787/*', 'https://pancake.xnampersonal.id.vn/*'];
 
 function build(t, args = []) {
   const output = fs.mkdtempSync(path.join(os.tmpdir(), 'pdb-extension-'));
@@ -31,6 +31,7 @@ test('MV3 build copies bytes, scopes hosts, packages popup and syntax-valid scri
   assert.deepEqual(manifest.content_scripts[0].js, ['vendor/pancakeUrlPolicy.js', 'vendor/pancakeDom.js', 'vendor/automation.js', 'pancake-bridge.js']);
   assert.equal(manifest.content_scripts[0].run_at, 'document_end');
   assert.deepEqual(manifest.content_scripts[1].js, ['dashboard-bridge.js']);
+  assert.deepEqual(manifest.content_scripts[1].matches, dashboard);
   assert.equal(manifest.action.default_popup, 'popup.html');
   assert.ok(fs.readFileSync(path.join(output, 'popup.html'), 'utf8').includes('popup.js'));
   for (const file of vendor) assert.deepEqual(fs.readFileSync(path.join(output, 'vendor', file)), fs.readFileSync(path.join(root, 'src/renderer', file)));

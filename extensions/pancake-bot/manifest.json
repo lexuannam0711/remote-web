@@ -15,7 +15,8 @@
     "https://*.pages.fm/*",
     "https://*.pancake.vn/*",
     "http://localhost:8787/*",
-    "http://127.0.0.1:8787/*"
+    "http://127.0.0.1:8787/*",
+    "https://pancake.xnampersonal.id.vn/*"
   ],
   "background": {
     "service_worker": "background.js"
@@ -39,7 +40,8 @@
     {
       "matches": [
         "http://localhost:8787/*",
-        "http://127.0.0.1:8787/*"
+        "http://127.0.0.1:8787/*",
+        "https://pancake.xnampersonal.id.vn/*"
       ],
       "js": [
         "dashboard-bridge.js"

@@ -271,6 +271,94 @@ test('buy tts: plays audio via API when provider is api', async () => {
   assert.deepEqual(playedUrls, ['blob:audio-100']);
 });
 
+for (const outcome of ['ended', 'media error', 'play rejection', 'play throw', 'volume failure', 'constructor failure', 'unsupported Audio']) {
+  test(`buy tts: default Audio cleanup after ${outcome}`, async (context) => {
+    const calls = [];
+    const speech = createSpeechMock();
+    const originalAudio = Object.getOwnPropertyDescriptor(globalThis, 'Audio');
+    let audio;
+    let ended;
+    let failed;
+    class MockAudio {
+      constructor(url) {
+        assert.equal(url, 'blob:cleanup-test');
+        if (outcome === 'constructor failure') throw new Error(outcome);
+        audio = this;
+      }
+      set volume(value) {
+        if (outcome === 'volume failure') throw new Error(outcome);
+      }
+      play() {
+        if (outcome === 'play throw') throw new Error(outcome);
+        if (outcome === 'play rejection') return Promise.reject(new Error(outcome));
+        ended = this.onended;
+        failed = this.onerror;
+        queueMicrotask(() => outcome === 'ended' ? ended() : failed(new Error(outcome)));
+        return Promise.resolve();
+      }
+      pause() { calls.push('pause'); }
+      removeAttribute(name) { assert.equal(name, 'src'); calls.push('remove src'); }
+      load() { calls.push('load'); }
+    }
+    Object.defineProperty(globalThis, 'Audio', { configurable: true, value: outcome === 'unsupported Audio' ? undefined : MockAudio });
+    context.after(() => {
+      if (originalAudio) Object.defineProperty(globalThis, 'Audio', originalAudio);
+      else delete globalThis.Audio;
+    });
+    context.mock.method(URL, 'revokeObjectURL', (url) => {
+      assert.equal(url, 'blob:cleanup-test');
+      calls.push('revoke');
+    });
+    const notifier = createBuyTtsNotifier({
+      provider: 'api',
+      fetch: async () => ({ ok: true, blob: async () => new Blob(['audio']) }),
+      createObjectURL: () => 'blob:cleanup-test',
+      speechSynthesis: speech.speechSynthesis,
+      SpeechSynthesisUtterance: speech.Utterance
+    });
+    assert.equal(notifier.speak(APPROVED_NEW_CUSTOMER_SPEECH), true);
+    await new Promise((resolve) => setImmediate(resolve));
+    if (ended) ended();
+    if (failed) failed(new Error('late media error'));
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.deepEqual(calls, audio ? ['pause', 'remove src', 'load', 'revoke'] : ['revoke']);
+    if (audio) {
+      assert.equal(audio.onended, null);
+      assert.equal(audio.onerror, null);
+    }
+    assert.equal(speech.spoken.length, outcome === 'ended' ? 0 : 1);
+    assert.equal(notifier.getLastSpokenText(), APPROVED_NEW_CUSTOMER_SPEECH);
+  });
+}
+
+for (const rejected of [false, true]) {
+  test(`buy tts: custom playAudio retains URL ownership on ${rejected ? 'rejection' : 'success'}`, async (context) => {
+    const speech = createSpeechMock();
+    const played = [];
+    const revoke = context.mock.method(URL, 'revokeObjectURL');
+    const notifier = createBuyTtsNotifier({
+      provider: 'api',
+      fetch: async () => ({ ok: true, blob: async () => new Blob(['audio']) }),
+      createObjectURL: () => 'blob:custom-test',
+      playAudio: async (url) => { played.push(url); if (rejected) throw new Error('blocked'); },
+      speechSynthesis: speech.speechSynthesis,
+      SpeechSynthesisUtterance: speech.Utterance
+    });
+    notifier.speak(APPROVED_NEW_CUSTOMER_SPEECH);
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.deepEqual(played, ['blob:custom-test']);
+    assert.equal(revoke.mock.callCount(), 0);
+    assert.equal(speech.spoken.length, rejected ? 1 : 0);
+  });
+}
+
+test('buy tts: vendor is byte-identical to source', () => {
+  assert.deepEqual(
+    fs.readFileSync(path.join(__dirname, '../src/renderer/buyTtsNotifier.js')),
+    fs.readFileSync(path.join(__dirname, '../web/public/vendor/buyTtsNotifier.js'))
+  );
+});
+
 test('buy tts: falls back to speechSynthesis when API fails', async () => {
   const clock = createClock();
   const speech = createSpeechMock();

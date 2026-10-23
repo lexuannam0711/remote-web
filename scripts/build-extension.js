@@ -2,7 +2,7 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const root = path.resolve(__dirname, '..');
-const defaults = { src: ['https://pages.fm/*', 'https://pancake.vn/*', 'https://*.pages.fm/*', 'https://*.pancake.vn/*'], dashboard: ['http://localhost:8787/*', 'http://127.0.0.1:8787/*'] };
+const defaults = { src: ['https://pages.fm/*', 'https://pancake.vn/*', 'https://*.pages.fm/*', 'https://*.pancake.vn/*'], dashboard: ['http://localhost:8787/*', 'http://127.0.0.1:8787/*', 'https://pancake.xnampersonal.id.vn/*'] };
 const values = { src: [], dashboard: [] };
 let out = path.join(root, 'extensions/pancake-bot');
 for (const arg of process.argv.slice(2)) {

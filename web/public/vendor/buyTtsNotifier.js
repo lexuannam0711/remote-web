@@ -140,21 +140,29 @@ function createBuyTtsNotifier(options = {}) {
     if (!res.ok) throw new Error(`TTS API error: ${res.status}`);
 
     const blob = await res.blob();
-    const playAudioFn = options.playAudio || ((blobUrl) => {
-      return new Promise((resolve, reject) => {
-        if (typeof Audio === 'undefined') return reject(new Error('Audio not supported'));
-        const audio = new Audio(blobUrl);
-        audio.volume = volume;
-        audio.onended = () => {
-          if (typeof URL !== 'undefined' && URL.revokeObjectURL) URL.revokeObjectURL(blobUrl);
-          resolve(true);
-        };
-        audio.onerror = (e) => {
-          if (typeof URL !== 'undefined' && URL.revokeObjectURL) URL.revokeObjectURL(blobUrl);
-          reject(e);
-        };
-        audio.play().catch(reject);
-      });
+    const playAudioFn = options.playAudio || (async (blobUrl) => {
+      let audio;
+      try {
+        await new Promise((resolve, reject) => {
+          if (typeof Audio === 'undefined') throw new Error('Audio not supported');
+          audio = new Audio(blobUrl);
+          audio.volume = volume;
+          audio.onended = () => resolve(true);
+          audio.onerror = reject;
+          audio.play().catch(reject);
+        });
+      } finally {
+        if (audio) {
+          audio.onended = null;
+          audio.onerror = null;
+          try { audio.pause(); } catch (_) {}
+          try { audio.removeAttribute('src'); } catch (_) {}
+          try { audio.load(); } catch (_) {}
+        }
+        if (typeof URL !== 'undefined' && typeof URL.revokeObjectURL === 'function') {
+          URL.revokeObjectURL(blobUrl);
+        }
+      }
     });
 
     const createUrl = options.createObjectURL || (typeof URL !== 'undefined' && URL.createObjectURL ? URL.createObjectURL.bind(URL) : null);

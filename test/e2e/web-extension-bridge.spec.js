@@ -51,6 +51,15 @@ test('real MV3 bridge: DOM calls, lease epoch, whitelist layers, slot limits and
       args: [`--disable-extensions-except=${extension}`, `--load-extension=${extension}`,
         `--host-resolver-rules=MAP pages.fm 127.0.0.1:${servers.fixturePort}`, '--ignore-certificate-errors', '--test-type', '--no-proxy-server']
     });
+    const missingBlobErrors = [];
+    context.on('requestfailed', request => {
+      if (request.url().startsWith('blob:') && request.failure()?.errorText.includes('ERR_FILE_NOT_FOUND')) {
+        missingBlobErrors.push(request.failure().errorText);
+      }
+    });
+    context.on('page', page => page.on('console', message => {
+      if (message.type() === 'error' && message.text().includes('ERR_FILE_NOT_FOUND')) missingBlobErrors.push(message.text());
+    }));
     // Only ancillary dashboard APIs are synthetic. Real login, lease, env,
     // assets, extension runtime and DOM calls remain untouched. Never read
     // private store data or write customer logs during dashboard initialization.
@@ -71,6 +80,7 @@ test('real MV3 bridge: DOM calls, lease epoch, whitelist layers, slot limits and
     await dashboard.locator('button').click();
     await expect(dashboard).toHaveURL(`${dashboardUrl}/`);
     await dashboard.waitForLoadState('load');
+    await dashboard.evaluate(() => Promise.all([primeTtsAudio(), primeTtsAudio()]));
     expect(await dashboard.evaluate(() => adapter.ping())).toBe(true);
     expect(await call(dashboard, 'bot1', 'getUnreadConversations')).toEqual({ code: 'NO_TAB' });
     const pancake = await context.newPage();
@@ -80,6 +90,52 @@ test('real MV3 bridge: DOM calls, lease epoch, whitelist layers, slot limits and
     expect(await call(dashboard, 'bot1', 'getUnreadConversations')).toEqual(unread);
     expect(await call(dashboard, 'bot1', 'getCurrentCustomerName')).toBe('Synthetic Customer');
     expect(await call(dashboard, 'bot1', 'getCurrentTags')).toEqual(['VIP']);
+    expect(await call(dashboard, 'bot1', 'getDomStatus')).toMatchObject({ unreadCount: 2 });
+    const vpsDashboard = await context.newPage();
+    await vpsDashboard.route('https://pancake.xnampersonal.id.vn/**', route => route.fulfill({
+      contentType: 'text/html', body: '<!doctype html><title>Isolated VPS bridge fixture</title>'
+    }));
+    await vpsDashboard.goto('https://pancake.xnampersonal.id.vn/');
+    await vpsDashboard.addScriptTag({ path: path.resolve(__dirname, '../../web/public/adapter.js') });
+    await vpsDashboard.evaluate(() => {
+      window.adapter = window.PDBDashboardAdapter.createDashboardAdapter({
+        postMessage: (message, origin) => window.postMessage(message, origin),
+        addListener: listener => {
+          window.addEventListener('message', listener);
+          return () => window.removeEventListener('message', listener);
+        }
+      });
+    });
+    expect(await vpsDashboard.evaluate(() => adapter.ping())).toBe(true);
+    expect(await call(vpsDashboard, 'bot1', 'getDomStatus')).toMatchObject({ unreadCount: 2 });
+    await vpsDashboard.addScriptTag({ path: path.resolve(__dirname, '../../web/public/vendor/buyTtsNotifier.js') });
+    for (const invalidAudio of [false, true]) {
+      const outcome = await vpsDashboard.evaluate(async invalid => {
+        const events = [];
+        const revoke = URL.revokeObjectURL;
+        let released;
+        const release = new Promise(resolve => { released = resolve; });
+        URL.revokeObjectURL = url => {
+          events.push('revoke');
+          revoke.call(URL, url);
+          setTimeout(released, 0);
+        };
+        try {
+          const wav = new Uint8Array([82,73,70,70,38,0,0,0,87,65,86,69,102,109,116,32,16,0,0,0,1,0,1,0,64,31,0,0,64,31,0,0,1,0,8,0,100,97,116,97,2,0,0,0,128,128]);
+          const notifier = window.PDBBuyTtsNotifier.createBuyTtsNotifier({
+            provider: 'api', volume: 0,
+            fetch: async () => new Response(new Blob([invalid ? 'invalid audio' : wav], { type: 'audio/wav' })),
+            speechSynthesis: { getVoices: () => [], speak: () => events.push('fallback') },
+            SpeechSynthesisUtterance: class {}
+          });
+          notifier.speak('Synthetic audio');
+          await release;
+          return { events, text: notifier.getLastSpokenText() };
+        } finally { URL.revokeObjectURL = revoke; }
+      }, invalidAudio);
+      expect(outcome).toEqual({ events: invalidAudio ? ['revoke', 'fallback'] : ['revoke'], text: 'Synthetic audio' });
+    }
+    await vpsDashboard.close();
     expect(await call(dashboard, 'bot1', 'findMarkUnreadButton')).toBe(true);
     expect(await call(dashboard, 'bot1', 'getReplyTextarea')).toBe(true);
 
@@ -89,6 +145,7 @@ test('real MV3 bridge: DOM calls, lease epoch, whitelist layers, slot limits and
     const second = await context.newPage();
     await second.goto(dashboardUrl);
     await second.waitForLoadState('load');
+    await second.evaluate(() => Promise.all([primeTtsAudio(), primeTtsAudio()]));
     expect(await second.evaluate(() => getMachineId())).not.toBe(owner);
     expect(await second.evaluate(async () => {
       try { await acquireBotLease(); return 'unexpected'; } catch (_) { return ownsLease(); }
@@ -160,6 +217,7 @@ test('real MV3 bridge: DOM calls, lease epoch, whitelist layers, slot limits and
     await reopened.goto('https://pages.fm/?reopened');
     await expect.poll(() => dashboard.evaluate(() => adapter.listSlots()[0].connected)).toBe(true);
     expect(await call(dashboard, 'bot1', 'getUnreadConversations')).toEqual(unread);
+    expect(missingBlobErrors).toEqual([]);
   } finally {
     try { if (context) await context.close(); } finally { await servers.stop(); }
   }

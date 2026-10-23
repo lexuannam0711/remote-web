@@ -69,25 +69,27 @@ Khi server khởi động thành công (`[web] listening on 127.0.0.1:8787` [src
 
 ## 3. Bản Chất Của Extension Manifest & Cổng Kết Nối
 
-### 3.1. Tại sao Dashboard Bridge chỉ nạp ở `localhost:8787` hoặc `127.0.0.1:8787`?
+### 3.1. Dashboard Bridge nạp trên những địa chỉ nào?
 Trong kiến trúc Chrome Extension Manifest V3 (`extensions/pancake-bot/manifest.json`):
 - Thuộc tính `host_permissions` [extensions/pancake-bot/manifest.json:17-18] khai báo:
   ```json
   "http://localhost:8787/*",
-  "http://127.0.0.1:8787/*"
+  "http://127.0.0.1:8787/*",
+  "https://pancake.xnampersonal.id.vn/*"
   ```
 - Thuộc tính `content_scripts[1].matches` [extensions/pancake-bot/manifest.json:40-43] khai báo:
   ```json
   {
     "matches": [
       "http://localhost:8787/*",
-      "http://127.0.0.1:8787/*"
+      "http://127.0.0.1:8787/*",
+      "https://pancake.xnampersonal.id.vn/*"
     ],
     "js": ["dashboard-bridge.js"],
     "run_at": "document_end"
   }
   ```
-**Bản chất:** Trình duyệt Chromium dựa vào khai báo này để quyết định có tiêm tập lệnh `dashboard-bridge.js` vào tab web hay không. Nếu truy cập Dashboard qua cổng khác (ví dụ `:9000`) hoặc qua IP mạng LAN / tên miền VPS (`https://bot.ten-mien-cua-admin.com`), trình duyệt sẽ **từ chối tiêm bridge script**. Khi đó, Dashboard không thể bắt tay với Extension và tính năng tự động hóa không hoạt động.
+**Bản chất:** Trình duyệt Chromium chỉ tiêm `dashboard-bridge.js` trên các địa chỉ trong danh sách. Build mặc định giữ cả localhost và VPS hiện tại; địa chỉ hoặc cổng khác cần cờ `--dashboard`. Dùng HTTPS cho VPS. Sau khi build, reload extension và tải lại cả Dashboard lẫn các tab Pancake đang mở để nạp bridge mới.
 
 ### 3.2. Muốn đổi cổng (PORT) hoặc tên miền (DOMAIN) thì phải sửa gì?
 Nếu Admin muốn đổi cổng hoặc chạy sau tên miền reverse proxy:
@@ -221,6 +223,8 @@ nhường toàn bộ quyền nhận lệnh Telegram (`/status`, `/baocao`, duy�
 ## 8. Hướng Dẫn Triển Khai VPS Linux
 
 Tài liệu hướng dẫn triển khai hệ thống Pancake Web Bot lên máy chủ ảo VPS Linux (Ubuntu / Debian / Rocky Linux) phục vụ truy cập qua mạng Internet hoặc mạng nội bộ công ty.
+
+Hướng dẫn vận hành hằng ngày: [docs/vps-usage.md](docs/vps-usage.md).
 
 ### 8.1. Kiến Trúc Vận Hành & Hai Lỗi Gốc Cần Khắc Phục
 
