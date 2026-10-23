@@ -1986,6 +1986,8 @@ function enableDragScroll(el) {
 }
 
 let ttsAudioPrimed = false;
+let ttsPrimePromise = null;
+let audioPrimingRegistered = false;
 
 // Kích hoạt quyền phát âm thanh (Autoplay Policy):
 // Trình duyệt chặn Audio.play() nếu tab chưa có user gesture.
@@ -1994,10 +1996,18 @@ let ttsAudioPrimed = false;
 // Bắt lỗi rõ ràng nếu bị chặn thay vì im lặng thất bại.
 async function primeTtsAudio() {
   if (ttsAudioPrimed) return true;
+  if (!ttsPrimePromise) {
+    ttsPrimePromise = primeTtsAudioOnce().finally(() => { ttsPrimePromise = null; });
+  }
+  return ttsPrimePromise;
+}
+
+async function primeTtsAudioOnce() {
   if (typeof Audio === 'undefined' || typeof Blob === 'undefined' || typeof URL === 'undefined' || typeof URL.createObjectURL !== 'function') {
     return false;
   }
   let audioUrl = '';
+  let audio = null;
   try {
     const silentWavBytes = new Uint8Array([
       0x52, 0x49, 0x46, 0x46, 0x26, 0x00, 0x00, 0x00,
@@ -2009,7 +2019,7 @@ async function primeTtsAudio() {
     ]);
     const silentBlob = new Blob([silentWavBytes], { type: 'audio/wav' });
     audioUrl = URL.createObjectURL(silentBlob);
-    const audio = new Audio(audioUrl);
+    audio = new Audio(audioUrl);
     audio.volume = 0;
     await audio.play();
     ttsAudioPrimed = true;
@@ -2023,6 +2033,13 @@ async function primeTtsAudio() {
     toast(msg, 5000);
     return false;
   } finally {
+    // Hủy tiến trình tải media trước khi revoke: nếu play() bị chặn mà revoke
+    // ngay, Chromium vẫn cố tải blob URL đã chết và log ERR_FILE_NOT_FOUND.
+    if (audio) {
+      try { audio.pause(); } catch (_) {}
+      try { audio.removeAttribute('src'); } catch (_) {}
+      try { audio.load(); } catch (_) {}
+    }
     if (audioUrl && typeof URL.revokeObjectURL === 'function') {
       try { URL.revokeObjectURL(audioUrl); } catch (_) {}
     }
@@ -2030,6 +2047,8 @@ async function primeTtsAudio() {
 }
 
 function registerAudioPriming() {
+  if (audioPrimingRegistered) return;
+  audioPrimingRegistered = true;
   const onGesture = () => {
     primeTtsAudio().catch(() => {});
   };
