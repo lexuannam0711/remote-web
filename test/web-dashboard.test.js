@@ -647,6 +647,42 @@ test('primeTtsAudio: registered on gesture and Audio.play rejection fails soft w
   assert.equal(h2.evaluate('ttsAudioPrimed'), true);
 });
 
+test('primeTtsAudio: concurrent calls share one attempt and abort media before revoking blob URL', async () => {
+  const originalCreate = URL.createObjectURL;
+  const originalRevoke = URL.revokeObjectURL;
+  const calls = [];
+  let constructed = 0;
+  URL.createObjectURL = () => 'blob:prime-test';
+  URL.revokeObjectURL = (url) => { calls.push('revoke'); assert.equal(url, 'blob:prime-test'); };
+
+  class BlockedAudio {
+    constructor(url) { constructed += 1; this.src = url; }
+    async play() {
+      const error = new Error('NotAllowedError: blocked');
+      error.name = 'NotAllowedError';
+      throw error;
+    }
+    pause() { calls.push('pause'); }
+    removeAttribute() { calls.push('removeAttribute'); }
+    load() { calls.push('load'); }
+  }
+
+  try {
+    const h = dashboardHarness({ Audio: BlockedAudio });
+    h.evaluate('registerAudioPriming()');
+    assert.equal(h.docListeners['click'].length, 1);
+    assert.equal(h.docListeners['keydown'].length, 1);
+
+    const results = await h.evaluate('Promise.all([primeTtsAudio(), primeTtsAudio()])');
+    assert.deepEqual(Array.from(results), [false, false]);
+    assert.equal(constructed, 1);
+    assert.deepEqual(calls, ['pause', 'removeAttribute', 'load', 'revoke']);
+  } finally {
+    URL.createObjectURL = originalCreate;
+    URL.revokeObjectURL = originalRevoke;
+  }
+});
+
 test('settings masked: empty key + masked renders placeholder; save preserves empty or sends CLEAR', async () => {
   const h = dashboardHarness({
     mockSettings: {
